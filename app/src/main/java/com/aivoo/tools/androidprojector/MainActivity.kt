@@ -44,6 +44,8 @@ class MainActivity : ComponentActivity() {
     private val mediaManager = MediaManager(this)
 
     private val imageFiles = mutableListOf<File>()
+    private var currentVideoFile: File? = null
+    private var currentPdfFile: File? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,20 +93,38 @@ class MainActivity : ComponentActivity() {
                                 status = "Received: ${uploaded.name}"
                                 when (uploaded.type) {
                                     ContentType.PDF -> {
-                                        content = Content.Pdf(File(uploaded.path))
+                                        currentPdfFile?.delete()
+                                        currentPdfFile = File(uploaded.path)
+                                        content = Content.Pdf(currentPdfFile!!)
                                         pdfPage = 0
+                                        server?.pdfPage = 0
                                     }
-                                    ContentType.VIDEO -> { content = Content.Video(File(uploaded.path)); server?.videoEventId = (server?.videoEventId ?: 0L) + 1L }
+                                    ContentType.VIDEO -> {
+                                        currentVideoFile?.delete()
+                                        currentVideoFile = File(uploaded.path)
+                                        content = Content.Video(currentVideoFile!!)
+                                        server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
+                                    }
                                     ContentType.IMAGE -> {
                                         imageFiles.add(File(uploaded.path))
                                         content = Content.Images(ArrayList(imageFiles))
                                     }
                                     ContentType.URL -> content = Content.Url(uploaded.path)
-                                    app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> status = "File shared: ${uploaded.name}"
+                                    app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> {
+                                        status = "File shared: ${uploaded.name}"
+                                        if (uploaded.name.endsWith(".apk", true)) {
+                                            try {
+                                                val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, packageName + ".fileprovider", File(uploaded.path))
+                                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                                    setDataAndType(uri, "application/vnd.android.package-archive")
+                                                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                                }
+                                                startActivity(intent)
+                                            } catch (e: Exception) { status = "Install failed: ${e.message}" }
+                                        }
+                                    }
                                     else -> content = Content.Error("Unsupported or unknown file type")
                                 }
-                                server?.pdfPage = pdfPage
-                                server?.pdfPageCount = 0
                             }
                         }, { listening ->
                             mediaManager.player?.volume = if (listening) 0f else 1f
