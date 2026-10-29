@@ -64,7 +64,6 @@ class MainActivity : ComponentActivity() {
                 var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
                 var pdfPage by remember { mutableStateOf(0) }
-                var pdfZoom by remember { mutableStateOf(1f) }
 
                 LaunchedEffect(Unit) {
                     val latest = UpdateManager.checkLatest()
@@ -93,7 +92,6 @@ class MainActivity : ComponentActivity() {
                                     ContentType.PDF -> {
                                         content = Content.Pdf(File(uploaded.path))
                                         pdfPage = 0
-                                        pdfZoom = 1f
                                     }
                                     ContentType.VIDEO -> { content = Content.Video(File(uploaded.path)); server?.videoEventId = (server?.videoEventId ?: 0L) + 1L }
                                     ContentType.IMAGE -> {
@@ -105,7 +103,6 @@ class MainActivity : ComponentActivity() {
                                     else -> content = Content.Error("Unsupported or unknown file type")
                                 }
                                 server?.pdfPage = pdfPage
-                                server?.pdfZoom = pdfZoom
                                 server?.pdfPageCount = 0
                             }
                         }, { listening ->
@@ -121,11 +118,8 @@ class MainActivity : ComponentActivity() {
                                 when (action) {
                                     "prev" -> if (pdfPage > 0) pdfPage--
                                     "next" -> if (pdfPage < (server?.pdfPageCount ?: Int.MAX_VALUE) - 1) pdfPage++
-                                    "zoomin" -> pdfZoom = (pdfZoom * 1.25f).coerceAtMost(4f)
-                                    "zoomout" -> pdfZoom = (pdfZoom / 1.25f).coerceAtLeast(0.5f)
                                 }
                                 server?.pdfPage = pdfPage
-                                server?.pdfZoom = pdfZoom
                             }
                         }, { action ->
                             runOnUiThread {
@@ -156,9 +150,7 @@ class MainActivity : ComponentActivity() {
                         is Content.Pdf -> PdfViewerScreen(
                             file = c.file,
                             pageIndex = pdfPage,
-                            zoom = pdfZoom,
                             onPageChange = { pdfPage = it; server?.pdfPage = it },
-                            onZoomChange = { pdfZoom = it; server?.pdfZoom = it },
                             onPageCount = { server?.pdfPageCount = it },
                             onBack = { content = Content.None }
                         )

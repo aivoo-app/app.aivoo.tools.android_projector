@@ -30,7 +30,6 @@ class MediaServer(
     @Volatile var listenerActive: Boolean = false
     @Volatile var pdfPage: Int = 0
     @Volatile var pdfPageCount: Int = 0
-    @Volatile var pdfZoom: Float = 1f
     @Volatile var videoPositionMs: Long = 0L
     @Volatile var videoDurationMs: Long = 0L
     @Volatile var videoPlaying: Boolean = false
@@ -137,10 +136,6 @@ class MediaServer(
                   <div class="btn-row">
                     <button onclick="pdfCmd('prev')">Prev Page</button>
                     <button onclick="pdfCmd('next')">Next Page</button>
-                  </div>
-                  <div class="btn-row" style="margin-top:10px;">
-                    <button onclick="pdfCmd('zoomin')">Zoom In</button>
-                    <button onclick="pdfCmd('zoomout')">Zoom Out</button>
                   </div>
                 </div>
 
@@ -441,7 +436,7 @@ class MediaServer(
 
     private fun servePdfState(): Response {
         val q = '"'
-        val json = "{" + q + "page" + q + ":" + pdfPage + "," + q + "pageCount" + q + ":" + pdfPageCount + "," + q + "zoom" + q + ":" + pdfZoom + "}"
+        val json = "{" + q + "page" + q + ":" + pdfPage + "," + q + "pageCount" + q + ":" + pdfPageCount + "}"
         val resp = newFixedLengthResponse(Response.Status.OK, "application/json", json)
         resp.addHeader("Access-Control-Allow-Origin", "*")
         return resp

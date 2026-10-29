@@ -19,9 +19,7 @@ import java.io.File
 fun PdfViewerScreen(
     file: File,
     pageIndex: Int,
-    zoom: Float,
     onPageChange: (Int) -> Unit,
-    onZoomChange: (Float) -> Unit,
     onPageCount: (Int) -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -30,8 +28,8 @@ fun PdfViewerScreen(
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(renderer) { onPageCount(renderer.pageCount) }
-    LaunchedEffect(pageIndex, zoom) {
-        bitmap = renderer.renderPage(pageIndex, (1920 * zoom).toInt())
+    LaunchedEffect(pageIndex) {
+        bitmap = renderer.renderPage(pageIndex, 1920)
     }
 
     Box(
