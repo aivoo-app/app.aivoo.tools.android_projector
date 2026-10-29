@@ -117,7 +117,7 @@ class MediaServer(
                 <div class="panel active" id="panel-upload">
                   <form id="uploadForm">
                     <label for="file">Choose file</label>
-                    <input type="file" id="file" name="file" accept=".pdf,.mp4,.mkv,.avi,.mov,.webm,.jpg,.jpeg,.png,.gif,.webp" required />
+                    <input type="file" id="file" name="file" accept=".pdf,.mp4,.mkv,.avi,.mov,.webm,.jpg,.jpeg,.png,.gif,.webp,.apk,.zip,.rar,.7z,*/*" required />
                     <div class="hint">Max 2 GB. Supported: PDF, video, image.</div>
                     <button type="submit">Upload</button>
                   </form>
