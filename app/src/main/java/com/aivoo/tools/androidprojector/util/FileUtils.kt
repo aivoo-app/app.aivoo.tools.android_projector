@@ -1,6 +1,6 @@
-package com.aivoo.tools.androidprojector.util
+package app.aivoo.tools.androidprojector.util
 
-import com.aivoo.tools.androidprojector.model.ContentType
+import app.aivoo.tools.androidprojector.model.ContentType
 import java.io.File
 
 object FileUtils {

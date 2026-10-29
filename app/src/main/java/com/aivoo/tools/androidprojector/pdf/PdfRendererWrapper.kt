@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.pdf
+package app.aivoo.tools.androidprojector.pdf
 
 import android.graphics.Bitmap
 import android.graphics.Color

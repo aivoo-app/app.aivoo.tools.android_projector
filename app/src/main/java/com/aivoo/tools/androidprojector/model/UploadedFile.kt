@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.model
+package app.aivoo.tools.androidprojector.model
 
 enum class ContentType { PDF, VIDEO, IMAGE, URL, UNKNOWN }
 

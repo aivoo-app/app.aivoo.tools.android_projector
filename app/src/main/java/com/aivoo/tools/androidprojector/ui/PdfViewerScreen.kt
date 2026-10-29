@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.ui
+package app.aivoo.tools.androidprojector.ui
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
@@ -12,7 +12,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aivoo.tools.androidprojector.pdf.PdfRendererWrapper
+import app.aivoo.tools.androidprojector.pdf.PdfRendererWrapper
 import java.io.File
 
 @Composable

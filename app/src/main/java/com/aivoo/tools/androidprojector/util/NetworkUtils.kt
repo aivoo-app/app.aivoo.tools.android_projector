@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.util
+package app.aivoo.tools.androidprojector.util
 
 import android.content.Context
 import java.net.Inet4Address

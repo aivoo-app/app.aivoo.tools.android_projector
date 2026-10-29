@@ -1,6 +1,6 @@
-package com.aivoo.tools.androidprojector.util
+package app.aivoo.tools.androidprojector.util
 
-import com.aivoo.tools.androidprojector.model.ContentType
+import app.aivoo.tools.androidprojector.model.ContentType
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

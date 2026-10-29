@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.ui
+package app.aivoo.tools.androidprojector.ui
 
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,7 +8,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
-import com.aivoo.tools.androidprojector.media.MediaManager
+import app.aivoo.tools.androidprojector.media.MediaManager
 
 @Composable
 fun VideoPlayerScreen(path: String, mediaManager: MediaManager, onBack: () -> Unit) {

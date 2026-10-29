@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.ui
+package app.aivoo.tools.androidprojector.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory

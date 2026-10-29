@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.ui
+package app.aivoo.tools.androidprojector.ui
 
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button

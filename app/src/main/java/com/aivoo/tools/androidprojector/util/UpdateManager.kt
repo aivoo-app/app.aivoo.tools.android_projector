@@ -1,11 +1,11 @@
-package com.aivoo.tools.androidprojector.util
+package app.aivoo.tools.androidprojector.util
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
-import com.aivoo.tools.androidprojector.BuildConfig
+import app.aivoo.tools.androidprojector.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject

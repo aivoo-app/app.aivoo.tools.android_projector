@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector.media
+package app.aivoo.tools.androidprojector.media
 
 import android.content.Context
 import androidx.media3.common.MediaItem

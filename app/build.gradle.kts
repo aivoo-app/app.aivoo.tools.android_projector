@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "com.aivoo.tools.androidprojector"
+    namespace = "app.aivoo.tools.androidprojector"
     compileSdk = 34
 
 
     defaultConfig {
-        applicationId = "com.aivoo.tools.androidprojector"
+        applicationId = "app.aivoo.tools.androidprojector"
         minSdk = 21
         targetSdk = 34
 

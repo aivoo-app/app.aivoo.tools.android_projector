@@ -1,4 +1,4 @@
-package com.aivoo.tools.androidprojector
+package app.aivoo.tools.androidprojector
 
 import android.app.Application
 import android.content.Context

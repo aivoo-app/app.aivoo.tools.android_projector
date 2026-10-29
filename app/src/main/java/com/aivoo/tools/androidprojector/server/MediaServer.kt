@@ -1,9 +1,9 @@
-package com.aivoo.tools.androidprojector.server
+package app.aivoo.tools.androidprojector.server
 
 import android.content.Context
 import android.util.Log
-import com.aivoo.tools.androidprojector.model.UploadedFile
-import com.aivoo.tools.androidprojector.media.AudioBroadcaster
+import app.aivoo.tools.androidprojector.model.UploadedFile
+import app.aivoo.tools.androidprojector.media.AudioBroadcaster
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.FileInputStream
@@ -34,6 +34,7 @@ class MediaServer(
     @Volatile var videoPositionMs: Long = 0L
     @Volatile var videoDurationMs: Long = 0L
     @Volatile var videoPlaying: Boolean = false
+    val uploadedFiles = mutableListOf<String>()
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -51,6 +52,7 @@ class MediaServer(
                 uri == "/pdf/command" && method == Method.POST -> handlePdfCommand(session)
                 uri == "/video/state" && method == Method.GET -> serveVideoState()
                 uri == "/video/command" && method == Method.POST -> handleVideoCommand(session)
+                uri == "/files" && method == Method.GET -> serveFiles()
                 uri == "/listen/start" && method == Method.POST -> handleListen(true)
                 uri == "/listen/stop" && method == Method.POST -> handleListen(false)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
@@ -109,6 +111,7 @@ class MediaServer(
                   <div class="mode" data-mode="url">URL</div>
                   <div class="mode" data-mode="pdf">PDF</div>
                   <div class="mode" data-mode="video">Video</div>
+                  <div class="mode" data-mode="files">Files</div>
                 </div>
 
                 <div class="panel active" id="panel-upload">
@@ -140,7 +143,12 @@ class MediaServer(
                   </div>
                 </div>
 
-                <div class="panel" id="panel-video">
+                                <div class="panel" id="panel-files">
+                  <p class="sub" style="margin-bottom:12px;">Shared files (temporary).</p>
+                  <div id="fileList" style="display:flex;flex-direction:column;gap:8px;"></div>
+                  <button onclick="refreshFiles()" style="margin-top:12px;">Refresh</button>
+                </div>
+<div class="panel" id="panel-video">
                   <p class="sub" style="margin-bottom:12px;">Video controls</p>
                   <div class="btn-row">
                     <button onclick="videoCmd('play')">Play</button>
@@ -175,6 +183,7 @@ class MediaServer(
                     document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
                     m.classList.add('active');
                     document.getElementById('panel-' + m.dataset.mode).classList.add('active');
+                    if (m.dataset.mode === "files") refreshFiles();
                   });
                 });
                 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
@@ -185,6 +194,7 @@ class MediaServer(
                     const txt = await res.text();
                     setStatus(res.ok ? ('OK: ' + txt) : ('Error ' + res.status + ': ' + txt));
                   } catch (err) { setStatus('Network error: ' + err); }
+                  if (res.ok) refreshFiles();
                 });
                 document.getElementById('urlForm').addEventListener('submit', async (e) => {
                   e.preventDefault();
@@ -198,6 +208,20 @@ class MediaServer(
                 });
                 function videoCmd(action){ fetch('/video/command', {method:'POST', body: new URLSearchParams({action})}).then(r=>r.text()).then(t=>setStatus('Video: '+action)).catch(e=>setStatus('Video err: '+e)); }
                 function pdfCmd(action){ fetch('/pdf/command', {method:'POST', body: new URLSearchParams({action})}).then(r=>r.text()).then(t=>setStatus('PDF: '+action)).catch(e=>setStatus('PDF err: '+e)); }
+                async function refreshFiles(){
+                  const el = document.getElementById('fileList');
+                  el.innerHTML = 'Loading...';
+                  try {
+                    const res = await fetch('/files');
+                    const files = await res.json();
+                    if (!files.length) { el.innerHTML = '<div class=hint>No files yet.</div>'; return; }
+                    let html = '';
+                    for (const f of files) {
+                      html += '<a href="/media/' + encodeURIComponent(f) + '" target="_blank" style="display:block;padding:10px;border-radius:8px;background:#0f172a;color:#e2e8f0;text-decoration:none;border:1px solid #334155;margin-bottom:6px;">' + f + '</a>';
+                    }
+                    el.innerHTML = html;
+                  } catch(e){ el.innerHTML = 'Error: ' + e; }
+                }
                 const audio = document.getElementById('audioPlayer');
                 let syncTimer = null;
                 let currentFile = null;
@@ -251,7 +275,7 @@ class MediaServer(
             return newFixedLengthResponse(Response.Status.PAYLOAD_TOO_LARGE, "text/plain", "File too large (max 2 GB)")
         }
         val type = detectType(tmpFile)
-        if (type == com.aivoo.tools.androidprojector.model.ContentType.UNKNOWN) {
+        if (type == app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN) {
             tmpFile.delete()
             return newFixedLengthResponse(Response.Status.UNSUPPORTED_MEDIA_TYPE, "text/plain", "Unsupported file type")
         }
@@ -261,11 +285,12 @@ class MediaServer(
             outFile.outputStream().use { out -> input.copyTo(out) }
         }
         tmpFile.delete()
-        if (type == com.aivoo.tools.androidprojector.model.ContentType.VIDEO) {
+        uploadedFiles.add(outFile.name)
+        if (type == app.aivoo.tools.androidprojector.model.ContentType.VIDEO) {
             currentFile = outFile
             currentPositionMs = 0L
         }
-        val uploaded = com.aivoo.tools.androidprojector.model.UploadedFile(
+        val uploaded = app.aivoo.tools.androidprojector.model.UploadedFile(
             name = outFile.name,
             path = outFile.absolutePath,
             mimeType = mimeFor(type),
@@ -284,11 +309,11 @@ class MediaServer(
         if (url.isNullOrBlank() || !URL_PATTERN.matcher(url).matches()) {
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Invalid URL (must start with http:// or https://)")
         }
-        val uploaded = com.aivoo.tools.androidprojector.model.UploadedFile(
+        val uploaded = app.aivoo.tools.androidprojector.model.UploadedFile(
             name = url,
             path = url,
             mimeType = "text/html",
-            type = com.aivoo.tools.androidprojector.model.ContentType.URL,
+            type = app.aivoo.tools.androidprojector.model.ContentType.URL,
             size = 0L,
         )
         onUpload(uploaded)
@@ -444,6 +469,20 @@ class MediaServer(
         return resp
     }
 
+    private fun serveFiles(): Response {
+        val sb = StringBuilder("[")
+        synchronized(uploadedFiles) {
+            uploadedFiles.forEachIndexed { i, name ->
+                if (i > 0) sb.append(",")
+                sb.append('"').append(name.replace('"'.toString(), "")).append('"')
+            }
+        }
+        sb.append("]")
+        val resp = newFixedLengthResponse(Response.Status.OK, "application/json", sb.toString())
+        resp.addHeader("Access-Control-Allow-Origin", "*")
+        return resp
+    }
+
     private fun mimeFromName(name: String): String {
         val lower = name.lowercase()
         return when {
@@ -461,39 +500,39 @@ class MediaServer(
         }
     }
 
-    private fun detectType(file: File): com.aivoo.tools.androidprojector.model.ContentType {
+    private fun detectType(file: File): app.aivoo.tools.androidprojector.model.ContentType {
         return try {
             val bytes = ByteArray(32)
             val read = FileInputStream(file).use { it.read(bytes) }
-            if (read <= 0) return com.aivoo.tools.androidprojector.model.ContentType.UNKNOWN
-            if (read >= 4 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.PDF
-            if (read >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.IMAGE
-            if (read >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.IMAGE
-            if (read >= 4 && bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.IMAGE
-            if (read >= 12 && bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() && bytes[8] == 0x57.toByte() && bytes[9] == 0x45.toByte() && bytes[10] == 0x42.toByte() && bytes[11] == 0x50.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.IMAGE
-            if (read >= 4 && bytes[0] == 0x1A.toByte() && bytes[1] == 0x45.toByte() && bytes[2] == 0xDF.toByte() && bytes[3] == 0xA3.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.VIDEO
-            if (read >= 12 && bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() && bytes[8] == 0x41.toByte() && bytes[9] == 0x56.toByte() && bytes[10] == 0x49.toByte()) return com.aivoo.tools.androidprojector.model.ContentType.VIDEO
+            if (read <= 0) return app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN
+            if (read >= 4 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.PDF
+            if (read >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.IMAGE
+            if (read >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.IMAGE
+            if (read >= 4 && bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.IMAGE
+            if (read >= 12 && bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() && bytes[8] == 0x57.toByte() && bytes[9] == 0x45.toByte() && bytes[10] == 0x42.toByte() && bytes[11] == 0x50.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.IMAGE
+            if (read >= 4 && bytes[0] == 0x1A.toByte() && bytes[1] == 0x45.toByte() && bytes[2] == 0xDF.toByte() && bytes[3] == 0xA3.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.VIDEO
+            if (read >= 12 && bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() && bytes[8] == 0x41.toByte() && bytes[9] == 0x56.toByte() && bytes[10] == 0x49.toByte()) return app.aivoo.tools.androidprojector.model.ContentType.VIDEO
             val head = String(bytes, 0, read, Charsets.ISO_8859_1)
-            if (head.contains("ftyp") || head.contains("moov") || head.contains("mdat")) return com.aivoo.tools.androidprojector.model.ContentType.VIDEO
-            com.aivoo.tools.androidprojector.model.ContentType.UNKNOWN
+            if (head.contains("ftyp") || head.contains("moov") || head.contains("mdat")) return app.aivoo.tools.androidprojector.model.ContentType.VIDEO
+            app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN
         } catch (e: Exception) {
-            com.aivoo.tools.androidprojector.model.ContentType.UNKNOWN
+            app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN
         }
     }
 
-    private fun extensionFor(type: com.aivoo.tools.androidprojector.model.ContentType): String = when (type) {
-        com.aivoo.tools.androidprojector.model.ContentType.PDF -> ".pdf"
-        com.aivoo.tools.androidprojector.model.ContentType.VIDEO -> ".mp4"
-        com.aivoo.tools.androidprojector.model.ContentType.IMAGE -> ".jpg"
-        com.aivoo.tools.androidprojector.model.ContentType.URL -> ""
-        com.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> ".bin"
+    private fun extensionFor(type: app.aivoo.tools.androidprojector.model.ContentType): String = when (type) {
+        app.aivoo.tools.androidprojector.model.ContentType.PDF -> ".pdf"
+        app.aivoo.tools.androidprojector.model.ContentType.VIDEO -> ".mp4"
+        app.aivoo.tools.androidprojector.model.ContentType.IMAGE -> ".jpg"
+        app.aivoo.tools.androidprojector.model.ContentType.URL -> ""
+        app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> ".bin"
     }
 
-    private fun mimeFor(type: com.aivoo.tools.androidprojector.model.ContentType): String = when (type) {
-        com.aivoo.tools.androidprojector.model.ContentType.PDF -> "application/pdf"
-        com.aivoo.tools.androidprojector.model.ContentType.VIDEO -> "video/mp4"
-        com.aivoo.tools.androidprojector.model.ContentType.IMAGE -> "image/jpeg"
-        com.aivoo.tools.androidprojector.model.ContentType.URL -> "text/html"
-        com.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> "application/octet-stream"
+    private fun mimeFor(type: app.aivoo.tools.androidprojector.model.ContentType): String = when (type) {
+        app.aivoo.tools.androidprojector.model.ContentType.PDF -> "application/pdf"
+        app.aivoo.tools.androidprojector.model.ContentType.VIDEO -> "video/mp4"
+        app.aivoo.tools.androidprojector.model.ContentType.IMAGE -> "image/jpeg"
+        app.aivoo.tools.androidprojector.model.ContentType.URL -> "text/html"
+        app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> "application/octet-stream"
     }
 }

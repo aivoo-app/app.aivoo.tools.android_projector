@@ -112,7 +112,7 @@ No automated tests yet. Suggested: unit tests for NanoHTTPD handlers and `PdfRen
 
 ## Troubleshooting
 - Kotlin daemon crashes on JDK 25: `kotlin.daemon.enabled=false` is set; run `./gradlew --stop` and retry.
-- `Unresolved reference ContentType`: NanoHTTPD defines its own; ours is `com.aivoo.tools.androidprojector.model.ContentType` (aliased `AppContentType` in `MediaServer`).
+- `Unresolved reference ContentType`: NanoHTTPD defines its own; ours is `app.aivoo.tools.androidprojector.model.ContentType` (aliased `AppContentType` in `MediaServer`).
 - No IP / 0.0.0.0: check network interface and permissions.
 - Upload fails: ensure client on same LAN; check logcat `MediaServer`.
 
