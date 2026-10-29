@@ -1,11 +1,9 @@
 package com.aivoo.tools.androidprojector.ui
 
 import android.graphics.Bitmap
-import android.graphics.Color
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,14 +16,22 @@ import com.aivoo.tools.androidprojector.pdf.PdfRendererWrapper
 import java.io.File
 
 @Composable
-fun PdfViewerScreen(file: File, onBack: () -> Unit) {
+fun PdfViewerScreen(
+    file: File,
+    pageIndex: Int,
+    zoom: Float,
+    onPageChange: (Int) -> Unit,
+    onZoomChange: (Float) -> Unit,
+    onPageCount: (Int) -> Unit = {},
+    onBack: () -> Unit,
+) {
     val renderer = remember { PdfRendererWrapper(file) }
     DisposableEffect(Unit) { onDispose { renderer.close() } }
-    var pageIndex by remember { mutableStateOf(0) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(pageIndex) {
-        bitmap = renderer.renderPage(pageIndex, 1920)
+    LaunchedEffect(renderer) { onPageCount(renderer.pageCount) }
+    LaunchedEffect(pageIndex, zoom) {
+        bitmap = renderer.renderPage(pageIndex, (1920 * zoom).toInt())
     }
 
     Box(
@@ -36,11 +42,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
                 if (ev.type == KeyEventType.KeyDown) {
                     when (ev.key) {
                         Key.DirectionRight, Key.PageDown -> {
-                            if (pageIndex < renderer.pageCount - 1) pageIndex++
+                            if (pageIndex < renderer.pageCount - 1) onPageChange(pageIndex + 1)
                             true
                         }
                         Key.DirectionLeft, Key.PageUp -> {
-                            if (pageIndex > 0) pageIndex--
+                            if (pageIndex > 0) onPageChange(pageIndex - 1)
                             true
                         }
                         Key.Back, Key.Escape -> { onBack(); true }
@@ -52,14 +58,11 @@ fun PdfViewerScreen(file: File, onBack: () -> Unit) {
         bitmap?.let { bmp ->
             Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
         } ?: Text("Loading...", color = androidx.compose.ui.graphics.Color.White, modifier = Modifier.align(Alignment.Center))
-        Row(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Button(onClick = { if (pageIndex > 0) pageIndex-- }, enabled = pageIndex > 0) { Text("Prev") }
-            Text("Page ${pageIndex + 1} / ${renderer.pageCount}", color = androidx.compose.ui.graphics.Color.White, fontSize = 16.sp, modifier = Modifier.align(Alignment.CenterVertically))
-            Button(onClick = { if (pageIndex < renderer.pageCount - 1) pageIndex++ }, enabled = pageIndex < renderer.pageCount - 1) { Text("Next") }
-            Button(onClick = onBack) { Text("Back") }
-        }
+        Text(
+            "Page ${pageIndex + 1} / ${renderer.pageCount}",
+            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+            fontSize = 14.sp,
+            color = androidx.compose.ui.graphics.Color.White
+        )
     }
 }

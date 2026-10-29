@@ -14,6 +14,7 @@ class MediaServer(
     private val port: Int = 7071,
     private val onUpload: (UploadedFile) -> Unit,
     private val onListenChanged: (Boolean) -> Unit = {},
+    private val onPdfCommand: (String) -> Unit = {},
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -26,6 +27,9 @@ class MediaServer(
     @Volatile var currentPositionMs: Long = 0L
     @Volatile var currentPlaying: Boolean = false
     @Volatile var listenerActive: Boolean = false
+    @Volatile var pdfPage: Int = 0
+    @Volatile var pdfPageCount: Int = 0
+    @Volatile var pdfZoom: Float = 1f
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -39,6 +43,8 @@ class MediaServer(
                 uri.startsWith("/media/") && method == Method.GET -> serveMedia(session, uri.removePrefix("/media/"))
                 uri == "/nowplaying" && method == Method.GET -> serveNowPlaying()
                 uri == "/audio/live" && method == Method.GET -> serveAudioLive()
+                uri == "/pdf/state" && method == Method.GET -> servePdfState()
+                uri == "/pdf/command" && method == Method.POST -> handlePdfCommand(session)
                 uri == "/listen/start" && method == Method.POST -> handleListen(true)
                 uri == "/listen/stop" && method == Method.POST -> handleListen(false)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
@@ -48,7 +54,6 @@ class MediaServer(
             newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Error: ${e.message}")
         }
     }
-
     private fun serveLanding(): Response {
         val html = """
             <!DOCTYPE html>
@@ -58,48 +63,100 @@ class MediaServer(
               <meta name="viewport" content="width=device-width, initial-scale=1" />
               <title>Android TV Projector</title>
               <style>
-                :root { --bg:#0f172a; --card:#1e293b; --accent:#6366f1; --text:#e2e8f0; --muted:#94a3b8; }
+                :root { --bg:#0b1020; --card:rgba(30,41,59,.75); --accent:#6366f1; --accent2:#22d3ee; --text:#e2e8f0; --muted:#94a3b8; --border:rgba(148,163,184,.15); }
                 * { box-sizing: border-box; }
-                body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: linear-gradient(135deg,#0f172a,#1e293b); color: var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
-                .card { background: var(--card); border-radius:16px; padding:32px; max-width:560px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.4); }
-                h1 { margin:0 0 8px; font-size:28px; }
-                p { color: var(--muted); margin:0 0 20px; }
-                label { display:block; margin:14px 0 6px; font-weight:600; }
-                input[type=file], input[type=text] { width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text); }
-                button { margin-top:16px; width:100%; padding:12px; border:none; border-radius:8px; background:var(--accent); color:#fff; font-size:16px; font-weight:600; cursor:pointer; transition:filter .15s; }
-                button:hover { filter:brightness(1.1); }
-                .divider { text-align:center; color:var(--muted); margin:24px 0 8px; }
+                body { margin:0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: radial-gradient(1200px 600px at 20% 10%, #1e293b, #0b1020 60%); color: var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+                .card { background: var(--card); backdrop-filter: blur(12px); border:1px solid var(--border); border-radius:20px; padding:36px; max-width:620px; width:100%; box-shadow:0 25px 70px rgba(0,0,0,.5); animation: fadeIn .4s ease; }
+                @keyframes fadeIn { from { opacity:0; transform: translateY(10px);} to {opacity:1; transform:none;} }
+                h1 { margin:0 0 4px; font-size:30px; background: linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+                .sub { color: var(--muted); margin:0 0 24px; font-size:14px; }
+                .modes { display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap; }
+                .mode { flex:1; min-width:90px; padding:10px 8px; border-radius:10px; border:1px solid var(--border); background:rgba(15,23,42,.6); color:var(--muted); cursor:pointer; text-align:center; font-weight:600; font-size:13px; transition:all .2s; user-select:none; }
+                .mode:hover { border-color: var(--accent); color: var(--text); }
+                .mode.active { background: linear-gradient(135deg,var(--accent),#4f46e5); color:#fff; border-color:transparent; box-shadow:0 6px 18px rgba(99,102,241,.4); }
+                .panel { display:none; animation: fadeIn .3s ease; }
+                .panel.active { display:block; }
+                label { display:block; margin:14px 0 6px; font-weight:600; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+                input[type=file], input[type=text] { width:100%; padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:rgba(15,23,42,.8); color:var(--text); font-size:14px; transition:border .2s; }
+                input:focus { outline:none; border-color: var(--accent); }
+                button { margin-top:16px; width:100%; padding:13px; border:none; border-radius:10px; background:linear-gradient(135deg,var(--accent),#4f46e5); color:#fff; font-size:15px; font-weight:600; cursor:pointer; transition:transform .1s, box-shadow .2s; box-shadow:0 6px 18px rgba(99,102,241,.35); }
+                button:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(99,102,241,.5); }
+                button:active { transform:translateY(0); }
+                .btn-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+                .btn-row button { margin-top:0; }
+                .btn-green { background:linear-gradient(135deg,#10b981,#059669); box-shadow:0 6px 18px rgba(16,185,129,.35); }
+                .btn-red { background:linear-gradient(135deg,#ef4444,#dc2626); box-shadow:0 6px 18px rgba(239,68,68,.35); }
                 .hint { font-size:12px; color:var(--muted); margin-top:8px; }
-                .status { margin-top:16px; padding:10px; border-radius:8px; background:#0f172a; color:var(--muted); font-size:13px; }
-                audio { width:100%; margin-top:12px; }
+                .status { margin-top:18px; padding:12px 14px; border-radius:10px; background:rgba(15,23,42,.8); color:var(--muted); font-size:13px; border:1px solid var(--border); min-height:40px; }
+                audio { width:100%; margin-top:12px; border-radius:10px; }
+                .footer { text-align:center; color:var(--muted); font-size:12px; margin-top:20px; }
+                .footer a { color:var(--accent2); text-decoration:none; }
+                .footer a:hover { text-decoration:underline; }
               </style>
             </head>
             <body>
               <div class="card">
                 <h1>Android TV Projector</h1>
-                <p>Upload a file (PDF, video, image) to display on your TV, or submit a URL.</p>
-                <form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
-                  <label for="file">Choose file</label>
-                  <input type="file" id="file" name="file" accept=".pdf,.mp4,.mkv,.avi,.mov,.webm,.jpg,.jpeg,.png,.gif,.webp" required />
-                  <div class="hint">Max 2 GB. Supported: PDF, video, image.</div>
-                  <button type="submit">Upload</button>
-                </form>
-                <div class="divider">— or —</div>
-                <form action="/url" method="post" id="urlForm">
-                  <label for="url">Open a URL</label>
-                  <input type="text" id="url" name="url" placeholder="https://example.com" required pattern="https?://.+" />
-                  <button type="submit">Open URL</button>
-                </form>
-                <div class="divider">— audio —</div>
-                <button id="listenBtn" style="background:#10b981;">Listen (sync audio)</button>
-                <button id="stopBtn" style="background:#ef4444;margin-top:8px;">Stop</button>
-                <audio id="audioPlayer" preload="none"></audio>
+                <p class="sub">Upload a file, open a URL, or control the TV remotely.</p>
+                <div class="modes">
+                  <div class="mode active" data-mode="upload">Upload</div>
+                  <div class="mode" data-mode="url">URL</div>
+                  <div class="mode" data-mode="pdf">PDF</div>
+                  <div class="mode" data-mode="audio">Audio</div>
+                </div>
+
+                <div class="panel active" id="panel-upload">
+                  <form id="uploadForm">
+                    <label for="file">Choose file</label>
+                    <input type="file" id="file" name="file" accept=".pdf,.mp4,.mkv,.avi,.mov,.webm,.jpg,.jpeg,.png,.gif,.webp" required />
+                    <div class="hint">Max 2 GB. Supported: PDF, video, image.</div>
+                    <button type="submit">Upload</button>
+                  </form>
+                </div>
+
+                <div class="panel" id="panel-url">
+                  <form id="urlForm">
+                    <label for="url">Open a URL</label>
+                    <input type="text" id="url" name="url" placeholder="https://example.com" required pattern="https?://.+" />
+                    <button type="submit">Open URL</button>
+                  </form>
+                </div>
+
+                <div class="panel" id="panel-pdf">
+                  <p class="sub" style="margin-bottom:12px;">Control the PDF on the TV.</p>
+                  <div class="btn-row">
+                    <button onclick="pdfCmd('prev')">Prev Page</button>
+                    <button onclick="pdfCmd('next')">Next Page</button>
+                  </div>
+                  <div class="btn-row" style="margin-top:10px;">
+                    <button onclick="pdfCmd('zoomin')">Zoom In</button>
+                    <button onclick="pdfCmd('zoomout')">Zoom Out</button>
+                  </div>
+                </div>
+
+                <div class="panel" id="panel-audio">
+                  <p class="sub" style="margin-bottom:12px;">Sync audio to this device.</p>
+                  <div class="btn-row">
+                    <button class="btn-green" id="listenBtn">Listen (sync audio)</button>
+                    <button class="btn-red" id="stopBtn">Stop</button>
+                  </div>
+                  <audio id="audioPlayer" preload="none"></audio>
+                </div>
+
                 <div class="status" id="status">Ready.</div>
-                <div class="hint" style="text-align:center;margin-top:16px;">Developed by Aimon Islam · AIVOO · <a href="https://aivoo.app" style="color:#6366f1;">aivoo.app</a></div>
+                <div class="footer">Developed by Aimon Islam &middot; AIVOO &middot; <a href="https://aivoo.app">aivoo.app</a></div>
               </div>
               <script>
                 const status = document.getElementById('status');
                 function setStatus(t){ status.textContent = t; }
+                document.querySelectorAll('.mode').forEach(m => {
+                  m.addEventListener('click', () => {
+                    document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));
+                    document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+                    m.classList.add('active');
+                    document.getElementById('panel-' + m.dataset.mode).classList.add('active');
+                  });
+                });
                 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                   e.preventDefault();
                   setStatus('Uploading...');
@@ -119,6 +176,7 @@ class MediaServer(
                     setStatus(res.ok ? ('OK: ' + txt) : ('Error ' + res.status + ': ' + txt));
                   } catch (err) { setStatus('Network error: ' + err); }
                 });
+                function pdfCmd(action){ fetch('/pdf/command', {method:'POST', body: new URLSearchParams({action})}).then(r=>r.text()).then(t=>setStatus('PDF: '+action)).catch(e=>setStatus('PDF err: '+e)); }
                 const audio = document.getElementById('audioPlayer');
                 let syncTimer = null;
                 let currentFile = null;
@@ -323,6 +381,25 @@ class MediaServer(
         listenerActive = start
         onListenChanged(start)
         val resp = newFixedLengthResponse(Response.Status.OK, "text/plain", if (start) "listening" else "stopped")
+        resp.addHeader("Access-Control-Allow-Origin", "*")
+        return resp
+    }
+
+    private fun servePdfState(): Response {
+        val q = '"'
+        val json = "{" + q + "page" + q + ":" + pdfPage + "," + q + "pageCount" + q + ":" + pdfPageCount + "," + q + "zoom" + q + ":" + pdfZoom + "}"
+        val resp = newFixedLengthResponse(Response.Status.OK, "application/json", json)
+        resp.addHeader("Access-Control-Allow-Origin", "*")
+        return resp
+    }
+
+    private fun handlePdfCommand(session: IHTTPSession): Response {
+        val files = mutableMapOf<String, String>()
+        try { session.parseBody(files) } catch (_: Exception) {}
+        val params = session.parameters
+        val action = params["action"]?.firstOrNull()?.trim() ?: ""
+        if (action.isNotBlank()) onPdfCommand(action)
+        val resp = newFixedLengthResponse(Response.Status.OK, "text/plain", "ok")
         resp.addHeader("Access-Control-Allow-Origin", "*")
         return resp
     }

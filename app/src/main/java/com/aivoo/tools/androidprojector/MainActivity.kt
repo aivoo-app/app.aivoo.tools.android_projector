@@ -25,7 +25,6 @@ import com.aivoo.tools.androidprojector.util.QrCodeUtils
 import com.aivoo.tools.androidprojector.util.UpdateManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -64,7 +63,8 @@ class MainActivity : ComponentActivity() {
                 var serverStarted by remember { mutableStateOf(false) }
                 var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
-                var downloading by remember { mutableStateOf(false) }
+                var pdfPage by remember { mutableStateOf(0) }
+                var pdfZoom by remember { mutableStateOf(1f) }
 
                 LaunchedEffect(Unit) {
                     val latest = UpdateManager.checkLatest()
@@ -89,7 +89,11 @@ class MainActivity : ComponentActivity() {
                             runOnUiThread {
                                 status = "Received: ${uploaded.name}"
                                 when (uploaded.type) {
-                                    ContentType.PDF -> content = Content.Pdf(File(uploaded.path))
+                                    ContentType.PDF -> {
+                                        content = Content.Pdf(File(uploaded.path))
+                                        pdfPage = 0
+                                        pdfZoom = 1f
+                                    }
                                     ContentType.VIDEO -> content = Content.Video(File(uploaded.path))
                                     ContentType.IMAGE -> {
                                         imageFiles.add(File(uploaded.path))
@@ -98,9 +102,23 @@ class MainActivity : ComponentActivity() {
                                     ContentType.URL -> content = Content.Url(uploaded.path)
                                     else -> content = Content.Error("Unsupported or unknown file type")
                                 }
+                                server?.pdfPage = pdfPage
+                                server?.pdfZoom = pdfZoom
+                                server?.pdfPageCount = 0
                             }
                         }, { listening ->
                             mediaManager.player?.volume = if (listening) 0f else 1f
+                        }, { action ->
+                            runOnUiThread {
+                                when (action) {
+                                    "prev" -> if (pdfPage > 0) pdfPage--
+                                    "next" -> if (pdfPage < (server?.pdfPageCount ?: Int.MAX_VALUE) - 1) pdfPage++
+                                    "zoomin" -> pdfZoom = (pdfZoom * 1.25f).coerceAtMost(4f)
+                                    "zoomout" -> pdfZoom = (pdfZoom / 1.25f).coerceAtLeast(0.5f)
+                                }
+                                server?.pdfPage = pdfPage
+                                server?.pdfZoom = pdfZoom
+                            }
                         })
                         server = s
                         try {
@@ -115,7 +133,15 @@ class MainActivity : ComponentActivity() {
                 } else {
                     when (val c = content) {
                         is Content.None -> HomeScreen(ip = ip, port = port, status = status, qrBitmap = qrBitmap)
-                        is Content.Pdf -> PdfViewerScreen(file = c.file, onBack = { content = Content.None })
+                        is Content.Pdf -> PdfViewerScreen(
+                            file = c.file,
+                            pageIndex = pdfPage,
+                            zoom = pdfZoom,
+                            onPageChange = { pdfPage = it; server?.pdfPage = it },
+                            onZoomChange = { pdfZoom = it; server?.pdfZoom = it },
+                            onPageCount = { server?.pdfPageCount = it },
+                            onBack = { content = Content.None }
+                        )
                         is Content.Video -> VideoPlayerScreen(path = c.file.absolutePath, mediaManager = mediaManager, onBack = { content = Content.None })
                         is Content.Images -> ImageSlideshowScreen(files = c.files, onBack = { content = Content.None })
                         is Content.Url -> WebViewScreen(url = c.url, onBack = { content = Content.None })
@@ -128,10 +154,8 @@ class MainActivity : ComponentActivity() {
                         version = info.tagName,
                         onDownload = {
                             updateInfo = null
-                            downloading = true
                             (this@MainActivity).lifecycleScope.launch {
                                 val file = UpdateManager.download(this@MainActivity, info.downloadUrl)
-                                downloading = false
                                 if (file != null) {
                                     UpdateManager.markInstalled(this@MainActivity, info.tagName)
                                     UpdateManager.installApk(this@MainActivity, file)
