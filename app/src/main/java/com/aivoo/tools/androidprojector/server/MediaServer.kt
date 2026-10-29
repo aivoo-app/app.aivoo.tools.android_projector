@@ -15,6 +15,7 @@ class MediaServer(
     private val onUpload: (UploadedFile) -> Unit,
     private val onListenChanged: (Boolean) -> Unit = {},
     private val onPdfCommand: (String) -> Unit = {},
+    private val onVideoCommand: (String) -> Unit = {},
 ) : NanoHTTPD(port) {
 
     companion object {
@@ -30,6 +31,9 @@ class MediaServer(
     @Volatile var pdfPage: Int = 0
     @Volatile var pdfPageCount: Int = 0
     @Volatile var pdfZoom: Float = 1f
+    @Volatile var videoPositionMs: Long = 0L
+    @Volatile var videoDurationMs: Long = 0L
+    @Volatile var videoPlaying: Boolean = false
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -45,6 +49,8 @@ class MediaServer(
                 uri == "/audio/live" && method == Method.GET -> serveAudioLive()
                 uri == "/pdf/state" && method == Method.GET -> servePdfState()
                 uri == "/pdf/command" && method == Method.POST -> handlePdfCommand(session)
+                uri == "/video/state" && method == Method.GET -> serveVideoState()
+                uri == "/video/command" && method == Method.POST -> handleVideoCommand(session)
                 uri == "/listen/start" && method == Method.POST -> handleListen(true)
                 uri == "/listen/stop" && method == Method.POST -> handleListen(false)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
@@ -102,7 +108,7 @@ class MediaServer(
                   <div class="mode active" data-mode="upload">Upload</div>
                   <div class="mode" data-mode="url">URL</div>
                   <div class="mode" data-mode="pdf">PDF</div>
-                  <div class="mode" data-mode="audio">Audio</div>
+                  <div class="mode" data-mode="video">Video</div>
                 </div>
 
                 <div class="panel active" id="panel-upload">
@@ -134,7 +140,21 @@ class MediaServer(
                   </div>
                 </div>
 
-                <div class="panel" id="panel-audio">
+                <div class="panel" id="panel-video">
+                  <p class="sub" style="margin-bottom:12px;">Video controls</p>
+                  <div class="btn-row">
+                    <button onclick="videoCmd('play')">Play</button>
+                    <button onclick="videoCmd('pause')">Pause</button>
+                  </div>
+                  <div class="btn-row" style="margin-top:10px;">
+                    <button onclick="videoCmd('seekback')">-10s</button>
+                    <button onclick="videoCmd('seekfwd')">+10s</button>
+                  </div>
+                  <div class="btn-row" style="margin-top:10px;">
+                    <button onclick="videoCmd('replay')">Replay</button>
+                    <button onclick="videoCmd('stop')">Stop</button>
+                  </div>
+                  <div class="divider">— audio sync —</div>
                   <p class="sub" style="margin-bottom:12px;">Sync audio to this device.</p>
                   <div class="btn-row">
                     <button class="btn-green" id="listenBtn">Listen (sync audio)</button>
@@ -176,6 +196,7 @@ class MediaServer(
                     setStatus(res.ok ? ('OK: ' + txt) : ('Error ' + res.status + ': ' + txt));
                   } catch (err) { setStatus('Network error: ' + err); }
                 });
+                function videoCmd(action){ fetch('/video/command', {method:'POST', body: new URLSearchParams({action})}).then(r=>r.text()).then(t=>setStatus('Video: '+action)).catch(e=>setStatus('Video err: '+e)); }
                 function pdfCmd(action){ fetch('/pdf/command', {method:'POST', body: new URLSearchParams({action})}).then(r=>r.text()).then(t=>setStatus('PDF: '+action)).catch(e=>setStatus('PDF err: '+e)); }
                 const audio = document.getElementById('audioPlayer');
                 let syncTimer = null;
@@ -399,6 +420,25 @@ class MediaServer(
         val params = session.parameters
         val action = params["action"]?.firstOrNull()?.trim() ?: ""
         if (action.isNotBlank()) onPdfCommand(action)
+        val resp = newFixedLengthResponse(Response.Status.OK, "text/plain", "ok")
+        resp.addHeader("Access-Control-Allow-Origin", "*")
+        return resp
+    }
+
+    private fun serveVideoState(): Response {
+        val q = '"'
+        val json = "{" + q + "positionMs" + q + ":" + videoPositionMs + "," + q + "durationMs" + q + ":" + videoDurationMs + "," + q + "playing" + q + ":" + videoPlaying + "}"
+        val resp = newFixedLengthResponse(Response.Status.OK, "application/json", json)
+        resp.addHeader("Access-Control-Allow-Origin", "*")
+        return resp
+    }
+
+    private fun handleVideoCommand(session: IHTTPSession): Response {
+        val files = mutableMapOf<String, String>()
+        try { session.parseBody(files) } catch (_: Exception) {}
+        val params = session.parameters
+        val action = params["action"]?.firstOrNull()?.trim() ?: ""
+        if (action.isNotBlank()) onVideoCommand(action)
         val resp = newFixedLengthResponse(Response.Status.OK, "text/plain", "ok")
         resp.addHeader("Access-Control-Allow-Origin", "*")
         return resp

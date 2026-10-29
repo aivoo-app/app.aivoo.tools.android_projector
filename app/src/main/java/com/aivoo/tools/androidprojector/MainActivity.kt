@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
                         if (content is Content.Video) {
                             server?.currentPositionMs = mediaManager.player?.currentPosition ?: 0L
                             server?.currentPlaying = mediaManager.player?.isPlaying ?: false
+                            server?.videoDurationMs = mediaManager.player?.duration ?: 0L
                         }
                         delay(100)
                     }
@@ -118,6 +119,18 @@ class MainActivity : ComponentActivity() {
                                 }
                                 server?.pdfPage = pdfPage
                                 server?.pdfZoom = pdfZoom
+                            }
+                        }, { action ->
+                            runOnUiThread {
+                                val pl = mediaManager.player ?: return@runOnUiThread
+                                when (action) {
+                                    "play" -> pl.play()
+                                    "pause" -> pl.pause()
+                                    "seekback" -> pl.seekTo((pl.currentPosition - 10000).coerceAtLeast(0))
+                                    "seekfwd" -> pl.seekTo(pl.currentPosition + 10000)
+                                    "replay" -> { pl.seekTo(0); pl.play() }
+                                    "stop" -> { pl.pause(); pl.seekTo(0) }
+                                }
                             }
                         })
                         server = s
