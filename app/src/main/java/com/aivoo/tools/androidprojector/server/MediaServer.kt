@@ -194,8 +194,8 @@ class MediaServer(
                     const res = await fetch('/upload', { method:'POST', body: new FormData(e.target) });
                     const txt = await res.text();
                     setStatus(res.ok ? ('OK: ' + txt) : ('Error ' + res.status + ': ' + txt));
+                    if (res.ok) refreshFiles();
                   } catch (err) { setStatus('Network error: ' + err); }
-                  if (res.ok) refreshFiles();
                 });
                 document.getElementById('urlForm').addEventListener('submit', async (e) => {
                   e.preventDefault();
@@ -249,6 +249,7 @@ class MediaServer(
                       audio.loop = false;
                       if (info.playing) { if (audio.ended) { audio.currentTime = 0; } audio.play().catch(()=>{}); } else { audio.pause(); }
                       setStatus('Synced: ' + info.file + (info.playing ? ' (playing)' : ' (paused)'));
+                      }
                     } catch (err) { setStatus('Sync error: ' + err); }
                   }, 100);
                 });
