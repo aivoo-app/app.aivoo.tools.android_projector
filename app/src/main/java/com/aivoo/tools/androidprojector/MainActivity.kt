@@ -1,6 +1,7 @@
 package app.aivoo.tools.androidprojector
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         App.clearCache(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -76,7 +78,6 @@ class MainActivity : ComponentActivity() {
                     while (isActive) {
                         if (content is Content.Video) {
                             server?.currentPositionMs = mediaManager.player?.currentPosition ?: 0L
-                            server?.currentPlaying = mediaManager.player?.isPlaying ?: false
                             server?.videoDurationMs = mediaManager.player?.duration ?: 0L
                         }
                         delay(100)
