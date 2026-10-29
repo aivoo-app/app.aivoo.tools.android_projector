@@ -17,12 +17,17 @@ import com.aivoo.tools.androidprojector.ui.HomeScreen
 import com.aivoo.tools.androidprojector.ui.ImageSlideshowScreen
 import com.aivoo.tools.androidprojector.ui.PdfViewerScreen
 import com.aivoo.tools.androidprojector.ui.StartScreen
+import com.aivoo.tools.androidprojector.ui.UpdateDialog
 import com.aivoo.tools.androidprojector.ui.VideoPlayerScreen
 import com.aivoo.tools.androidprojector.ui.WebViewScreen
 import com.aivoo.tools.androidprojector.util.NetworkUtils
 import com.aivoo.tools.androidprojector.util.QrCodeUtils
+import com.aivoo.tools.androidprojector.util.UpdateManager
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.io.File
 
 sealed class Content {
@@ -36,7 +41,7 @@ sealed class Content {
 
 class MainActivity : ComponentActivity() {
     private var server: MediaServer? = null
-    private val mediaManager = MediaManager(this).apply { onStateChanged = { playing, pos -> server?.currentPositionMs = pos; server?.currentPlaying = playing } }
+    private val mediaManager = MediaManager(this)
 
     private val imageFiles = mutableListOf<File>()
 
@@ -58,6 +63,15 @@ class MainActivity : ComponentActivity() {
                 var status by remember { mutableStateOf("Waiting for upload...") }
                 var serverStarted by remember { mutableStateOf(false) }
                 var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+                var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
+                var downloading by remember { mutableStateOf(false) }
+
+                LaunchedEffect(Unit) {
+                    val latest = UpdateManager.checkLatest()
+                    if (latest != null && UpdateManager.isUpdateAvailable(this@MainActivity, latest)) {
+                        updateInfo = latest
+                    }
+                }
 
                 LaunchedEffect(content) {
                     while (isActive) {
@@ -107,6 +121,25 @@ class MainActivity : ComponentActivity() {
                         is Content.Url -> WebViewScreen(url = c.url, onBack = { content = Content.None })
                         is Content.Error -> ErrorScreen(message = c.message, onBack = { content = Content.None })
                     }
+                }
+
+                updateInfo?.let { info ->
+                    UpdateDialog(
+                        version = info.tagName,
+                        onDownload = {
+                            updateInfo = null
+                            downloading = true
+                            (this@MainActivity).lifecycleScope.launch {
+                                val file = UpdateManager.download(this@MainActivity, info.downloadUrl)
+                                downloading = false
+                                if (file != null) {
+                                    UpdateManager.markInstalled(this@MainActivity, info.tagName)
+                                    UpdateManager.installApk(this@MainActivity, file)
+                                }
+                            }
+                        },
+                        onDismiss = { updateInfo = null },
+                    )
                 }
             }
         }
