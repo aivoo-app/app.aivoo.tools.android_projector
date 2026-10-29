@@ -34,6 +34,7 @@ class MediaServer(
     @Volatile var videoPositionMs: Long = 0L
     @Volatile var videoDurationMs: Long = 0L
     @Volatile var videoPlaying: Boolean = false
+    @Volatile var videoEventId: Long = 1
     val uploadedFiles = mutableListOf<String>()
 
     override fun serve(session: IHTTPSession): Response {
@@ -229,12 +230,15 @@ class MediaServer(
                   if (syncTimer) return;
                   try { await fetch('/listen/start', {method:'POST'}); } catch(e){}
                   setStatus('Syncing audio...');
+                  let lastEventId = 0;
                   syncTimer = setInterval(async () => {
                     try {
                       const res = await fetch('/nowplaying');
                       const info = await res.json();
                       if (!info || !info.file) { setStatus('No video playing.'); return; }
-                      if (info.file !== currentFile) {
+                      if (info.eventId && info.eventId !== lastEventId) {
+                        lastEventId = info.eventId;
+                        if (info.file !== currentFile) {
                         currentFile = info.file;
                         audio.src = '/media/' + encodeURIComponent(info.file);
                         audio.load();
@@ -246,7 +250,7 @@ class MediaServer(
                       if (info.playing) { if (audio.ended) { audio.currentTime = 0; } audio.play().catch(()=>{}); } else { audio.pause(); }
                       setStatus('Synced: ' + info.file + (info.playing ? ' (playing)' : ' (paused)'));
                     } catch (err) { setStatus('Sync error: ' + err); }
-                  }, 200);
+                  }, 100);
                 });
                 document.getElementById('stopBtn').addEventListener('click', () => {
                   if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
@@ -354,9 +358,9 @@ class MediaServer(
     private fun serveNowPlaying(): Response {
         val f = currentFile
         val json = if (f != null) {
-            "{\"file\":\"${f.name}\",\"positionMs\":${currentPositionMs},\"playing\":${currentPlaying}}"
+            "{\"file\":\"${f.name}\",\"positionMs\":${currentPositionMs},\"playing\":${currentPlaying},\"eventId\":${videoEventId}}"
         } else {
-            "{\"file\":null,\"positionMs\":0,\"playing\":false}"
+            "{\"file\":null,\"positionMs\":0,\"playing\":false,\"eventId\":${videoEventId}}"
         }
         val resp = newFixedLengthResponse(Response.Status.OK, "application/json", json)
         resp.addHeader("Access-Control-Allow-Origin", "*")
@@ -455,7 +459,7 @@ class MediaServer(
 
     private fun serveVideoState(): Response {
         val q = '"'
-        val json = "{" + q + "positionMs" + q + ":" + videoPositionMs + "," + q + "durationMs" + q + ":" + videoDurationMs + "," + q + "playing" + q + ":" + videoPlaying + "}"
+        val json = "{" + q + "positionMs" + q + ":" + videoPositionMs + "," + q + "durationMs" + q + ":" + videoDurationMs + "," + q + "playing" + q + ":" + videoPlaying + "," + q + "eventId" + q + ":" + videoEventId + "}"
         val resp = newFixedLengthResponse(Response.Status.OK, "application/json", json)
         resp.addHeader("Access-Control-Allow-Origin", "*")
         return resp

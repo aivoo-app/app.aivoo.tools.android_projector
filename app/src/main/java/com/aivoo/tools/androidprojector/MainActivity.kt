@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
                                         pdfPage = 0
                                         pdfZoom = 1f
                                     }
-                                    ContentType.VIDEO -> content = Content.Video(File(uploaded.path))
+                                    ContentType.VIDEO -> { content = Content.Video(File(uploaded.path)); server?.videoEventId = (server?.videoEventId ?: 0L) + 1L }
                                     ContentType.IMAGE -> {
                                         imageFiles.add(File(uploaded.path))
                                         content = Content.Images(ArrayList(imageFiles))
@@ -110,6 +110,12 @@ class MainActivity : ComponentActivity() {
                             }
                         }, { listening ->
                             mediaManager.player?.volume = if (listening) 0f else 1f
+                            mediaManager.onStateChanged = { playing, pos ->
+                                server?.currentPositionMs = pos
+                                server?.currentPlaying = playing
+                                server?.videoDurationMs = mediaManager.player?.duration ?: 0L
+                                server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
+                            }
                         }, { action ->
                             runOnUiThread {
                                 when (action) {
