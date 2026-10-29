@@ -275,11 +275,14 @@ class MediaServer(
             return newFixedLengthResponse(Response.Status.PAYLOAD_TOO_LARGE, "text/plain", "File too large (max 2 GB)")
         }
         val type = detectType(tmpFile)
-        if (type == app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN) {
-            tmpFile.delete()
-            return newFixedLengthResponse(Response.Status.UNSUPPORTED_MEDIA_TYPE, "text/plain", "Unsupported file type")
+        val isShared = (type == app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN)
+        val (ext, mime) = if (isShared) {
+            val hb = ByteArray(2)
+            FileInputStream(tmpFile).use { it.read(hb) }
+            if (hb[0] == 0x50.toByte() && hb[1] == 0x4B.toByte()) Pair(".apk", "application/vnd.android.package-archive") else Pair(".bin", "application/octet-stream")
+        } else {
+            Pair(extensionFor(type), mimeFor(type))
         }
-        val ext = extensionFor(type)
         val outFile = File(context.cacheDir, "upload_${System.currentTimeMillis()}$ext")
         tmpFile.inputStream().use { input ->
             outFile.outputStream().use { out -> input.copyTo(out) }
@@ -293,7 +296,7 @@ class MediaServer(
         val uploaded = app.aivoo.tools.androidprojector.model.UploadedFile(
             name = outFile.name,
             path = outFile.absolutePath,
-            mimeType = mimeFor(type),
+            mimeType = mime,
             type = type,
             size = outFile.length(),
         )

@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
                                         content = Content.Images(ArrayList(imageFiles))
                                     }
                                     ContentType.URL -> content = Content.Url(uploaded.path)
+                                    app.aivoo.tools.androidprojector.model.ContentType.UNKNOWN -> status = "File shared: ${uploaded.name}"
                                     else -> content = Content.Error("Unsupported or unknown file type")
                                 }
                                 server?.pdfPage = pdfPage
