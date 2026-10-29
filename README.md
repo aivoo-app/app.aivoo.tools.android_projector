@@ -1,3 +1,6 @@
+![Build](https://github.com/aivoo-app/app.aivoo.tools.android_projector/actions/workflows/build.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+
 # Android TV Local Media Server
 
 An Android TV app that runs an embedded HTTP server on the TV. A remote browser uploads a file (PDF, video, image) or submits a URL; the TV displays the content full-screen. All uploads live only in `cacheDir` and are wiped on exit/crash (no persistence).
@@ -131,3 +134,6 @@ A workflow (`.github/workflows/build.yml`) builds Debug and Release APKs on ever
 - Artifacts: download `app-debug` / `app-release-unsigned` from the Actions tab.
 - Push a tag like `v1.0.0` to create a GitHub Release with the APKs attached.
 - To use: create a GitHub repo, then `git remote add origin <url>` and `git push -u origin main`.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file.
