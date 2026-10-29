@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK & Bundle
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Debug & Release APK
+    name: Build Release APK & AAB
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -62,11 +62,25 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Build Release APK (unsigned)
+      - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
+
+      - name: Build Release AAB
+        run: ./gradlew bundleRelease --stacktrace
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - name: Upload Release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-bundle
+          path: app/build/outputs/bundle/release/app-release.aab
+          retention-days: 30
 
       - name: Determine version
         id: version
@@ -79,20 +93,6 @@ jobs:
             echo "draft=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
-
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-unsigned
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -101,8 +101,8 @@ jobs:
           draft: ${{ steps.version.outputs.draft }}
           prerelease: ${{ steps.version.outputs.draft }}
           files: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release-unsigned.apk
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/bundle/release/app-release.aab
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
