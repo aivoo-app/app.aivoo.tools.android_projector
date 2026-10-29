@@ -132,8 +132,15 @@ class MainActivity : ComponentActivity() {
                                     "replay" -> { pl.seekTo(0); pl.play(); server?.currentPositionMs = 0 }
                                     "stop" -> { pl.pause(); pl.seekTo(0); server?.currentPositionMs = 0 }
                                 }
-                                server?.currentPositionMs = pl.currentPosition
-                                server?.currentPlaying = pl.isPlaying
+                                val newPlaying = when (action) {
+                                    "play" -> true
+                                    "pause" -> false
+                                    "stop" -> false
+                                    "replay" -> true
+                                    else -> pl.isPlaying
+                                }
+                                if (action == "play" || action == "pause") server?.currentPositionMs = pl.currentPosition
+                                server?.currentPlaying = newPlaying
                                 server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
                             }
                         })
