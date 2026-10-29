@@ -127,11 +127,14 @@ class MainActivity : ComponentActivity() {
                                 when (action) {
                                     "play" -> pl.play()
                                     "pause" -> pl.pause()
-                                    "seekback" -> pl.seekTo((pl.currentPosition - 10000).coerceAtLeast(0))
-                                    "seekfwd" -> pl.seekTo(pl.currentPosition + 10000)
-                                    "replay" -> { pl.seekTo(0); pl.play() }
-                                    "stop" -> { pl.pause(); pl.seekTo(0) }
+                                    "seekback" -> { val np = (pl.currentPosition - 10000).coerceAtLeast(0); pl.seekTo(np); server?.currentPositionMs = np }
+                                    "seekfwd" -> { val np = pl.currentPosition + 10000; pl.seekTo(np); server?.currentPositionMs = np }
+                                    "replay" -> { pl.seekTo(0); pl.play(); server?.currentPositionMs = 0 }
+                                    "stop" -> { pl.pause(); pl.seekTo(0); server?.currentPositionMs = 0 }
                                 }
+                                server?.currentPositionMs = pl.currentPosition
+                                server?.currentPlaying = pl.isPlaying
+                                server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
                             }
                         })
                         server = s
