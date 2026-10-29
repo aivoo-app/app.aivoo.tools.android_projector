@@ -1,7 +1,7 @@
 package com.aivoo.tools.androidprojector.pdf
 
-import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import java.io.File
@@ -27,6 +27,7 @@ class PdfRendererWrapper(private val file: File) {
         val w = if (width > 0) width else page.width
         val h = if (height > 0) height else (page.height * scale).toInt().coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(w.coerceAtLeast(1), h.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(Color.WHITE)
         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         page.close()
         return bitmap
