@@ -109,13 +109,13 @@ fun ImageSlideshowScreen(files: List<File>, onBack: () -> Unit) {
     ) {
         val message = error
         when {
-            message != null -> Text(message, color = Color.White)
+            message != null -> MessageOverlay(message)
             bitmap != null -> Image(
                 bitmap = bitmap!!.asImageBitmap(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize()
             )
-            else -> Text(stringResource(R.string.loading), color = Color.White)
+            else -> LoadingOverlay()
         }
 
         if (files.size > 1) {

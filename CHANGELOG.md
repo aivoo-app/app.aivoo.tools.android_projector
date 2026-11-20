@@ -2,13 +2,14 @@
 
 ## [Unreleased]
 
-### Screen sharing
-- Added browser screen/window/tab sharing via WebRTC with best-effort audio.
-- Added a TV `ScreenShareScreen` backed by `SurfaceViewRenderer`.
-- Added HTTPS with a generated self-signed certificate (required for `getDisplayMedia`).
+### Remote control
 - Added one-global-session locking with heartbeat/timeout and a busy page for second devices.
-- Added `/session/claim` (PIN + client ID), `/session/heartbeat`, `/session`, `/rtc/offer`, and `/rtc/stop` endpoints.
+- Added `/session/claim` (PIN + client ID), `/session/heartbeat`, and `/session` endpoints.
 - Added PIN rate limiting: 5 failed attempts trigger a 30-second cooldown.
+
+### Removed
+- Removed browser screen/window/tab sharing. The app now uses plain HTTP, and `getDisplayMedia` requires a secure HTTPS context.
+- Removed the local CA server, WebRTC dependency, screen-share UI, and `/rtc/*` endpoints.
 
 ### Security
 - Added a per-launch 6-digit pairing PIN; the URL stays clean and the PIN is shown on the TV.
@@ -17,6 +18,10 @@
 - Added pre-parse `Content-Length` checks, a 512 MB upload cap, free-space checks, and temp/partial cleanup.
 - Removed APK auto-install from unauthenticated uploads; unknown files are downloads only.
 - Blocked non-`http(s)` navigation in the WebView.
+
+### UI
+- Added a shared dark projector theme with branded cards, buttons, loading overlays, and error panels.
+- Polished Start, Home, Error, PDF, image, video, and WebView screens.
 
 ### Correctness
 - Keyed PDF/video/WebView screens by file/URL so replacements render correctly.

@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.StatFs
 import android.util.Log
 import app.aivoo.tools.androidprojector.model.UploadedFile
-import app.aivoo.tools.androidprojector.util.HttpsCaConfig
 import app.aivoo.tools.androidprojector.util.MediaTypeDetector
 import app.aivoo.tools.androidprojector.util.PathUtils
 import app.aivoo.tools.androidprojector.util.RangeParser
@@ -24,15 +23,7 @@ class MediaServer(
     private val onVideoCommand: (String) -> Unit = {},
     private val onFilesChanged: () -> Unit = {},
     private val onSessionChanged: (Boolean) -> Unit = {},
-    private val onScreenShareStart: () -> Unit = {},
-    private val onScreenShareOffer: (String) -> String? = { null },
-    private val onScreenShareStop: () -> Unit = {},
-    private val onScreenShareStatus: () -> String = { "unavailable" },
 ) : NanoHTTPD(port) {
-
-    init {
-        makeSecure(HttpsCaConfig.getSocketFactory(context), arrayOf("TLSv1.2"))
-    }
 
     private data class RemoteSession(
         val id: String,
@@ -51,7 +42,6 @@ class MediaServer(
     companion object {
         private const val TAG = "MediaServer"
         private const val MAX_UPLOAD_BYTES = 512L * 1024 * 1024 // 512 MB
-        private const val MAX_RTC_OFFER_BYTES = 64L * 1024
         private const val MIN_FREE_BYTES = 64L * 1024 * 1024 // 64 MB headroom
         private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "ts")
         private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "avif")
@@ -80,7 +70,6 @@ class MediaServer(
     @Volatile var videoEventId: Long = 1
     @Volatile private var listenerCount: Int = 0
     @Volatile private var activeSession: RemoteSession? = null
-    @Volatile private var screenShareActive: Boolean = false
     @Volatile private var pinAttempts: Int = 0
     @Volatile private var pinBlockedUntil: Long = 0L
     private val sessionLock = Any()
@@ -100,7 +89,6 @@ class MediaServer(
             }
         }
         if (expired) {
-            stopScreenShare()
             onSessionChanged(false)
         }
         return expired
@@ -117,7 +105,6 @@ class MediaServer(
             activeSession = null
             had
         }
-        stopScreenShare()
         if (hadSession) onSessionChanged(false)
     }
 
@@ -175,7 +162,6 @@ class MediaServer(
             onSessionChanged(false)
             true
         }
-        if (released) stopScreenShare()
         return released
     }
 
@@ -190,21 +176,12 @@ class MediaServer(
         }
     }
 
-    private fun stopScreenShare() {
-        val wasActive = synchronized(sessionLock) {
-            val active = screenShareActive
-            screenShareActive = false
-            active
-        }
-        if (wasActive) onScreenShareStop()
-    }
-
     private fun cookieHeader(sessionId: String): String {
-        return "$sessionCookieName=$sessionId; Path=$sessionCookiePath; HttpOnly; Secure; SameSite=Strict"
+        return "$sessionCookieName=$sessionId; Path=$sessionCookiePath; HttpOnly; SameSite=Strict"
     }
 
     private fun clearCookieHeader(): String {
-        return "$sessionCookieName=; Path=$sessionCookiePath; Max-Age=0; Secure; SameSite=Strict"
+        return "$sessionCookieName=; Path=$sessionCookiePath; Max-Age=0; SameSite=Strict"
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -272,9 +249,6 @@ class MediaServer(
                 route == "/files/clear" && method == Method.POST -> handleClear()
                 route == "/listen/start" && method == Method.POST -> handleListen(true)
                 route == "/listen/stop" && method == Method.POST -> handleListen(false)
-                route == "/rtc/offer" && method == Method.POST -> handleRtcOffer(session)
-                route == "/rtc/stop" && method == Method.POST -> handleRtcStop()
-                route == "/rtc/status" && method == Method.GET -> handleRtcStatus()
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
             }
         } catch (e: Exception) {
@@ -334,66 +308,6 @@ class MediaServer(
         return response
     }
 
-    private fun handleRtcOffer(session: IHTTPSession): Response {
-        val contentLength = session.headers["content-length"]?.toLongOrNull() ?: 0L
-        if (contentLength > MAX_RTC_OFFER_BYTES) {
-            return newFixedLengthResponse(Response.Status.PAYLOAD_TOO_LARGE, "text/plain", "Offer too large")
-        }
-        val offer = try {
-            String(session.inputStream.readBytes(), Charsets.UTF_8).trim()
-        } catch (e: Exception) {
-            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Unable to read offer")
-        }
-        if (offer.isBlank()) {
-            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "offer required")
-        }
-        val busy = synchronized(sessionLock) {
-            if (screenShareActive) {
-                true
-            } else {
-                screenShareActive = true
-                false
-            }
-        }
-        if (busy) {
-            return newFixedLengthResponse(Response.Status.CONFLICT, "text/plain", "screen_share_in_progress")
-        }
-        try {
-            onScreenShareStart()
-            val answer = onScreenShareOffer(offer)
-            if (answer.isNullOrBlank()) {
-                val detail = onScreenShareStatus()
-                Log.e(TAG, "Screen share answer was null/blank; stage=" + detail)
-                stopScreenShare()
-                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Unable to answer: " + detail)
-            }
-            val json = JSONObject().put("answer", answer).toString()
-            val response = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", json)
-            response.addHeader("Cache-Control", "no-store")
-            return response
-        } catch (e: Exception) {
-            Log.e(TAG, "screen share failed", e)
-            stopScreenShare()
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Screen share failed")
-        }
-    }
-
-    private fun handleRtcStatus(): Response {
-        val status = onScreenShareStatus()
-        val json = JSONObject()
-            .put("active", screenShareActive)
-            .put("status", status)
-            .toString()
-        val response = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", json)
-        response.addHeader("Cache-Control", "no-store")
-        return response
-    }
-
-    private fun handleRtcStop(): Response {
-        stopScreenShare()
-        return newFixedLengthResponse(Response.Status.OK, "text/plain", "stopped")
-    }
-
     private fun serveRoot(session: IHTTPSession): Response {
         if (requireSession(session)) {
             val redirect = newFixedLengthResponse(Response.Status.REDIRECT, "text/plain", "Redirecting")
@@ -416,10 +330,17 @@ class MediaServer(
               <meta name="referrer" content="no-referrer" />
               <title>Android TV Projector</title>
               <style>
-                body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0b1020; color:#e2e8f0; font-family:system-ui,-apple-system,sans-serif; padding:24px; }
-                .card { background:rgba(30,41,59,.85); border:1px solid rgba(148,163,184,.2); border-radius:18px; padding:28px; max-width:420px; width:100%; text-align:center; }
-                button { margin-top:14px; width:100%; padding:12px; border:none; border-radius:10px; background:#6366f1; color:white; font-size:15px; cursor:pointer; }
-                .hint { color:#94a3b8; font-size:13px; margin-top:10px; }
+                :root { --bg:#0b1020; --card:rgba(30,41,59,.78); --accent:#6366f1; --accent2:#22d3ee; --text:#e2e8f0; --muted:#94a3b8; --border:rgba(148,163,184,.18); }
+                * { box-sizing:border-box; }
+                body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:radial-gradient(1200px 600px at 20% 10%, #1e293b, var(--bg) 60%); color:var(--text); font-family:'Segoe UI',system-ui,-apple-system,sans-serif; padding:24px; }
+                .card { background:var(--card); backdrop-filter:blur(14px); border:1px solid var(--border); border-radius:24px; padding:34px; max-width:460px; width:100%; text-align:center; box-shadow:0 25px 70px rgba(0,0,0,.5); animation:fadeIn .35s ease; }
+                @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+                h1 { margin:0 0 6px; font-size:28px; background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+                button { margin-top:18px; width:100%; padding:13px; border:none; border-radius:12px; background:linear-gradient(135deg,var(--accent),#4f46e5); color:#fff; font-size:15px; font-weight:600; cursor:pointer; box-shadow:0 6px 18px rgba(99,102,241,.35); }
+                button:hover { transform:translateY(-1px); }
+                button:focus-visible { outline:2px solid var(--accent2); outline-offset:3px; }
+                .hint { color:var(--muted); font-size:13px; margin:10px 0 0; line-height:1.5; }
+                @media (prefers-reduced-motion:reduce) { * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
               </style>
             </head>
             <body>
@@ -449,36 +370,48 @@ class MediaServer(
               <meta name="referrer" content="no-referrer" />
               <title>Android TV Projector</title>
               <style>
-                body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0b1020; color:#e2e8f0; font-family:system-ui,-apple-system,sans-serif; padding:24px; }
-                .card { background:rgba(30,41,59,.85); border:1px solid rgba(148,163,184,.2); border-radius:18px; padding:28px; max-width:420px; width:100%; text-align:center; }
-                input { width:100%; margin-top:14px; padding:12px; border-radius:10px; border:1px solid rgba(148,163,184,.25); background:#0f172a; color:#e2e8f0; font-size:22px; text-align:center; letter-spacing:6px; }
-                button { margin-top:14px; width:100%; padding:12px; border:none; border-radius:10px; background:#6366f1; color:white; font-size:15px; cursor:pointer; }
-                .hint { color:#94a3b8; font-size:13px; margin-top:10px; }
+                :root { --bg:#0b1020; --card:rgba(30,41,59,.78); --accent:#6366f1; --accent2:#22d3ee; --text:#e2e8f0; --muted:#94a3b8; --border:rgba(148,163,184,.18); }
+                * { box-sizing:border-box; }
+                body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:radial-gradient(1200px 600px at 20% 10%, #1e293b, var(--bg) 60%); color:var(--text); font-family:'Segoe UI',system-ui,-apple-system,sans-serif; padding:24px; }
+                .card { background:var(--card); backdrop-filter:blur(14px); border:1px solid var(--border); border-radius:24px; padding:34px; max-width:440px; width:100%; text-align:center; box-shadow:0 25px 70px rgba(0,0,0,.5); animation:fadeIn .35s ease; }
+                @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+                h1 { margin:0 0 6px; font-size:28px; background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+                input { width:100%; margin-top:18px; padding:14px; border-radius:12px; border:1px solid var(--border); background:rgba(15,23,42,.9); color:var(--text); font-size:26px; text-align:center; letter-spacing:8px; font-weight:700; }
+                input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(99,102,241,.2); }
+                button { margin-top:14px; width:100%; padding:13px; border:none; border-radius:12px; background:linear-gradient(135deg,var(--accent),#4f46e5); color:#fff; font-size:15px; font-weight:600; cursor:pointer; box-shadow:0 6px 18px rgba(99,102,241,.35); }
+                button:hover { transform:translateY(-1px); box-shadow:0 8px 22px rgba(99,102,241,.5); }
+                button:focus-visible { outline:2px solid var(--accent2); outline-offset:3px; }
+                .hint { color:var(--muted); font-size:13px; margin:12px 0 0; line-height:1.5; min-height:18px; }
+                .error { color:#fca5a5; }
+                @media (prefers-reduced-motion:reduce) { * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
               </style>
             </head>
             <body>
               <div class="card">
                 <h1>Android TV Projector</h1>
                 <p class="hint">Enter the 6-digit pairing code shown on the TV.</p>
-                <input id="pin" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" />
-                <button onclick="claim()">Pair</button>
-                <div id="msg" class="hint"></div>
+                <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" aria-label="6-digit pairing code" />
+                <button id="pairBtn" onclick="claim()">Pair</button>
+                <div id="msg" class="hint" role="status" aria-live="polite"></div>
               </div>
               <script>
+                document.getElementById('pin').addEventListener('keydown', (e) => {
+                  if (e.key === 'Enter') claim();
+                });
                 const clientId = sessionStorage.getItem('tv_client') || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
                 sessionStorage.setItem('tv_client', clientId);
-                function setMsg(t){ document.getElementById('msg').textContent = t; }
+                function setMsg(t, isError){ const el = document.getElementById('msg'); el.textContent = t; el.classList.toggle('error', !!isError); }
                 async function claim(){
                   const pin = document.getElementById('pin').value.trim();
-                  if (!/^[0-9]{6}$/.test(pin)) { setMsg('Enter the 6-digit pairing code.'); return; }
+                  if (!/^[0-9]{6}$/.test(pin)) { setMsg('Enter the 6-digit pairing code.', true); return; }
                   try {
                     const res = await fetch('session/claim', {method:'POST', body:new URLSearchParams({clientId, pin})});
                     if (res.ok) { location.replace('app'); return; }
-                    if (res.status === 409) { setMsg('TV is in use by another device.'); return; }
-                    if (res.status === 401) { setMsg('Invalid pairing code.'); return; }
-                    if (res.status === 429) { setMsg('Too many attempts. Wait 30 seconds.'); return; }
+                    if (res.status === 409) { setMsg('TV is in use by another device.', true); return; }
+                    if (res.status === 401) { setMsg('Invalid pairing code.', true); return; }
+                    if (res.status === 429) { setMsg('Too many attempts. Wait 30 seconds.', true); return; }
                     throw new Error('HTTP ' + res.status);
-                  } catch(e) { setMsg('Unable to connect: ' + e); }
+                  } catch(e) { setMsg('Unable to connect: ' + e, true); }
                 }
               </script>
             </body>
@@ -530,6 +463,23 @@ class MediaServer(
                 .footer { text-align:center; color:var(--muted); font-size:12px; margin-top:20px; }
                 .footer a { color:var(--accent2); text-decoration:none; }
                 .footer a:hover { text-decoration:underline; }
+                button:focus-visible, input:focus-visible, .mode:focus-visible { outline:2px solid var(--accent2); outline-offset:2px; }
+                button:disabled { opacity:.55; cursor:not-allowed; transform:none; box-shadow:none; }
+                input[type=file]::file-selector-button { margin-right:10px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:#1e293b; color:var(--text); font:inherit; font-size:13px; cursor:pointer; }
+                input[type=file]::file-selector-button:hover { border-color:var(--accent); }
+                .divider { display:flex; align-items:center; gap:10px; margin:20px 0 8px; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:1px; text-transform:uppercase; }
+                .divider::before, .divider::after { content:""; flex:1; height:1px; background:var(--border); }
+                @media (max-width:520px) {
+                  body { padding:14px; }
+                  .card { padding:26px 20px; border-radius:16px; }
+                  h1 { font-size:26px; }
+                  .modes { gap:6px; }
+                  .mode { min-width:72px; padding:9px 6px; font-size:12px; }
+                  .btn-row { grid-template-columns:1fr; }
+                }
+                @media (prefers-reduced-motion: reduce) {
+                  * { animation-duration:.01ms !important; transition-duration:.01ms !important; }
+                }
               </style>
             </head>
             <body>
@@ -542,7 +492,6 @@ class MediaServer(
                   <div class="mode" data-mode="pdf">PDF</div>
                   <div class="mode" data-mode="video">Video</div>
                   <div class="mode" data-mode="files">Files</div>
-                  <div class="mode" data-mode="share">Share</div>
                 </div>
 
                 <div class="panel active" id="panel-upload">
@@ -570,15 +519,6 @@ class MediaServer(
                   </div>
                 </div>
 
-                                <div class="panel" id="panel-share">
-                  <p class="sub" style="margin-bottom:12px;">Share a screen, window, or tab. Audio is included when the browser supports it.</p>
-                  <div class="btn-row">
-                    <button class="btn-green" id="shareBtn">Share screen</button>
-                    <button class="btn-red" id="stopShareBtn">Stop</button>
-                  </div>
-                  <div class="hint">Desktop Chrome/Edge/Firefox/Safari. Phone browsers may not support screen capture.</div>
-                </div>
-
                 <div class="panel" id="panel-files">
                   <p class="sub" style="margin-bottom:12px;">Shared files (temporary).</p>
                   <div id="fileList" style="display:flex;flex-direction:column;gap:8px;"></div>
@@ -587,7 +527,7 @@ class MediaServer(
                     <button class="btn-red" onclick="clearFiles()">Clear all</button>
                   </div>
                 </div>
-<div class="panel" id="panel-video">
+                <div class="panel" id="panel-video">
                   <p class="sub" style="margin-bottom:12px;">Video controls</p>
                   <div class="btn-row">
                     <button onclick="videoCmd('play')">Play</button>
@@ -601,7 +541,7 @@ class MediaServer(
                     <button onclick="videoCmd('replay')">Replay</button>
                     <button onclick="videoCmd('stop')">Stop</button>
                   </div>
-                  <div class="divider">— audio sync —</div>
+                  <div class="divider">Audio sync</div>
                   <p class="sub" style="margin-bottom:12px;">Sync audio to this device.</p>
                   <div class="btn-row">
                     <button class="btn-green" id="listenBtn">Listen (sync audio)</button>
@@ -610,7 +550,7 @@ class MediaServer(
                   <audio id="audioPlayer" preload="none" controls></audio>
                 </div>
 
-                <div class="status" id="status">Ready.</div>
+                <div class="status" id="status" role="status" aria-live="polite">Ready.</div>
                 <div class="btn-row" style="margin-top:12px;">
                   <button class="btn-red" onclick="leaveSession()">Leave session</button>
                 </div>
@@ -640,72 +580,6 @@ class MediaServer(
                   location.href = '.';
                 }
 
-                let pc = null;
-                let localStream = null;
-                let shareActive = false;
-                function waitIce(connection) {
-                  return new Promise(resolve => {
-                    if (connection.iceGatheringState === 'complete') { resolve(); return; }
-                    let done = false;
-                    const check = () => {
-                      if (done) return;
-                      if (connection.iceGatheringState === 'complete') { done = true; resolve(); }
-                      else setTimeout(check, 100);
-                    };
-                    check();
-                    setTimeout(() => { if (!done) { done = true; resolve(); } }, 5000);
-                  });
-                }
-                async function startShare() {
-                  if (shareActive) return;
-                  if (!window.isSecureContext) { setStatus('Screen sharing requires HTTPS.'); return; }
-                  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-                    setStatus('Screen sharing is not supported in this browser. Use desktop Chrome/Edge/Firefox/Safari.');
-                    return;
-                  }
-                  try {
-                    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
-                    localStream = stream;
-                    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-                    stream.getTracks().forEach(track => pc.addTrack(track, stream));
-                    pc.onconnectionstatechange = () => {
-                      if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
-                        setStatus('Screen share connection lost.');
-                        stopShare();
-                      }
-                    };
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    await waitIce(pc);
-                    const res = await fetch('rtc/offer', { method:'POST', headers: {'Content-Type': 'text/plain'}, body: pc.localDescription.sdp });
-                    const data = await res.json().catch(() => ({}));
-                    if (!res.ok) {
-                      const st = await fetch('rtc/status').then(r => r.json()).catch(() => ({}));
-                      throw new Error(st.status || data.error || ('HTTP ' + res.status));
-                    }
-                    await pc.setRemoteDescription({ type: 'answer', sdp: data.answer });
-                    shareActive = true;
-                    setStatus('Sharing screen...');
-                  } catch (e) {
-                    setStatus('Share failed: ' + e);
-                    stopShare();
-                  }
-                }
-                function stopShare() {
-                  if (localStream) {
-                    localStream.getTracks().forEach(track => track.stop());
-                    localStream = null;
-                  }
-                  if (pc) {
-                    pc.close();
-                    pc = null;
-                  }
-                  shareActive = false;
-                  fetch('rtc/stop', {method:'POST'}).catch(()=>{});
-                  setStatus('Sharing stopped.');
-                }
-                document.getElementById('shareBtn').addEventListener('click', startShare);
-                document.getElementById('stopShareBtn').addEventListener('click', stopShare);
                 document.querySelectorAll('.mode').forEach(m => {
                   m.addEventListener('click', () => {
                     document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));

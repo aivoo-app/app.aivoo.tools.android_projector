@@ -91,13 +91,6 @@ dependencies {
     implementation("androidx.annotation:annotation-experimental:1.4.1")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
 
-    // WebRTC for browser screen sharing
-    implementation("io.getstream:stream-webrtc-android:1.3.10")
-
-    // Self-signed HTTPS certificate generation for the local server
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.10.01"))
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

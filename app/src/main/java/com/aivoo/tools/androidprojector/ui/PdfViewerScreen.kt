@@ -145,8 +145,8 @@ fun PdfViewerScreen(
     ) {
         val message = error
         when {
-            message != null -> Text(message, color = Color.White)
-            renderer == null -> Text(stringResource(R.string.loading), color = Color.White)
+            message != null -> MessageOverlay(message)
+            renderer == null -> LoadingOverlay()
             bitmap != null -> Image(
                 bitmap = bitmap!!.asImageBitmap(),
                 contentDescription = null,

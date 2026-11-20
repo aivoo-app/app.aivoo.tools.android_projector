@@ -11,9 +11,10 @@
 
     <!-- Home screen -->
     <string name="server_url">Server: %1$s</string>
+    <string name="pairing_code">Pairing code: %1$s</string>
     <string name="qr_content_description">Pairing QR code</string>
-    <string name="qr_hint">Scan to open the upload page. The URL contains a private pairing token.</string>
-    <string name="upload_help">Upload files or submit URLs from the web page.</string>
+    <string name="qr_hint">Scan to open the upload page, then enter the pairing code shown on the TV.</string>
+    <string name="upload_help">Upload files, open URLs, and control playback from the web page.</string>
 
     <!-- Status -->
     <string name="status_waiting">Waiting for upload…</string>
@@ -23,8 +24,6 @@
     <string name="status_file_shared">File shared: %1$s</string>
     <string name="status_files_updated">Files updated</string>
     <string name="status_remote_active">Remote session active</string>
-    <string name="status_screen_share">Screen share active</string>
-    <string name="screen_share_unavailable">Screen sharing is unavailable on this device.</string>
     <string name="status_server_failed">Server failed: %1$s</string>
     <string name="status_update_failed">Update failed: %1$s</string>
 

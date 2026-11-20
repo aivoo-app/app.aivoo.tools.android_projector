@@ -8,15 +8,11 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 
 @Composable
@@ -87,24 +83,9 @@ fun WebViewScreen(url: String) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         val message = errorMessage
-        if (message != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.85f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(message, color = Color.White)
-            }
-        } else if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f)),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(progress = { progress / 100f })
-            }
+        when {
+            message != null -> MessageOverlay(message)
+            isLoading -> LoadingOverlay(progress / 100f)
         }
     }
 

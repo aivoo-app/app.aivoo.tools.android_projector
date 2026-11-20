@@ -2,15 +2,11 @@ package app.aivoo.tools.androidprojector.ui
 
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
@@ -77,24 +73,9 @@ fun VideoPlayerScreen(path: String, mediaManager: MediaManager, onBack: () -> Un
         )
 
         val message = errorMessage
-        if (message != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.85f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(message, color = Color.White)
-            }
-        } else if (isLoading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f)),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
+        when {
+            message != null -> MessageOverlay(message)
+            isLoading -> LoadingOverlay()
         }
     }
 }

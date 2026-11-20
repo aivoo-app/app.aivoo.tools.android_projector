@@ -5,29 +5,24 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
 import android.os.Bundle
-import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import app.aivoo.tools.androidprojector.media.MediaManager
-import app.aivoo.tools.androidprojector.media.ScreenShareManager
 import app.aivoo.tools.androidprojector.R
 import app.aivoo.tools.androidprojector.model.ContentType
-import app.aivoo.tools.androidprojector.server.CaServer
 import app.aivoo.tools.androidprojector.server.MediaServer
 import app.aivoo.tools.androidprojector.ui.ErrorScreen
 import app.aivoo.tools.androidprojector.ui.HomeScreen
 import app.aivoo.tools.androidprojector.ui.ImageSlideshowScreen
 import app.aivoo.tools.androidprojector.ui.PdfViewerScreen
-import app.aivoo.tools.androidprojector.ui.ScreenShareScreen
+import app.aivoo.tools.androidprojector.ui.ProjectorTheme
 import app.aivoo.tools.androidprojector.ui.StartScreen
 import app.aivoo.tools.androidprojector.ui.UpdateDialog
 import app.aivoo.tools.androidprojector.ui.VideoPlayerScreen
@@ -47,15 +42,12 @@ sealed class Content {
     data class Video(val file: File) : Content()
     data class Images(val files: List<File>) : Content()
     data class Url(val url: String) : Content()
-    data class ScreenShare(val sessionId: String) : Content()
     data class Error(val message: String) : Content()
 }
 
 class MainActivity : ComponentActivity() {
     private var server: MediaServer? = null
-    private var caServer: CaServer? = null
     private val mediaManager = MediaManager(this)
-    private var screenShareManager: ScreenShareManager? = null
 
     private val imageFiles = mutableListOf<File>()
     private var currentVideoFile: File? = null
@@ -64,9 +56,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        screenShareManager = runCatching { ScreenShareManager(this) }
-            .onFailure { Log.e("MainActivity", "ScreenShareManager init failed", it) }
-            .getOrNull()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
@@ -74,7 +63,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            ProjectorTheme {
                 var ip by remember { mutableStateOf(NetworkUtils.getIpAddress(this@MainActivity)) }
                 var port by remember { mutableStateOf(7071) }
                 var content by remember { mutableStateOf<Content>(Content.None) }
@@ -82,7 +71,6 @@ class MainActivity : ComponentActivity() {
                 var serverStarted by remember { mutableStateOf(false) }
                 var starting by remember { mutableStateOf(false) }
                 var serverUrl by remember { mutableStateOf<String?>(null) }
-                var caUrl by remember { mutableStateOf("") }
                 var pairingPin by remember { mutableStateOf("") }
                 var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
@@ -130,7 +118,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(ip, serverStarted) {
                     val s = server ?: return@LaunchedEffect
                     if (serverStarted) {
-                        val url = "https://$ip:$port/"
+                        val url = "http://$ip:$port/"
                         serverUrl = url
                         qrBitmap = QrCodeUtils.generate(url)
                     }
@@ -138,7 +126,6 @@ class MainActivity : ComponentActivity() {
 
                 BackHandler(enabled = serverStarted && content !is Content.None) {
                     server?.endSession()
-                    screenShareManager?.stop()
                     content = Content.None
                     server?.currentFile = null
                     server?.currentPlaying = false
@@ -260,31 +247,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             }, { active ->
                                 runOnUiThread {
-                                    if (!active && content is Content.ScreenShare) {
-                                        screenShareManager?.stop()
-                                        content = Content.None
-                                    }
                                     status = getString(if (active) R.string.status_remote_active else R.string.status_waiting)
                                 }
-                            }, {
-                                runOnUiThread {
-                                    mediaManager.player?.pause()
-                                    content = Content.ScreenShare("active")
-                                    status = getString(R.string.status_screen_share)
-                                }
-                            }, { offer ->
-                                screenShareManager?.createAnswer(offer)
-                            }, {
-                                runOnUiThread {
-                                    screenShareManager?.stop()
-                                    if (content is Content.ScreenShare) {
-                                        content = Content.None
-                                    }
-                                    status = getString(R.string.status_waiting)
-                                }
-                            }, {
-                                if (screenShareManager == null) "unavailable"
-                                else (screenShareManager?.lastError ?: screenShareManager?.lastStage ?: "ok")
                             })
                             server = s
                             mediaManager.onStateChanged = { playing, pos ->
@@ -294,19 +258,16 @@ class MainActivity : ComponentActivity() {
                                 server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
                             }
                             s.start()
-                            val url = "https://$ip:$selectedPort/"
+                            val url = "http://$ip:$selectedPort/"
                             serverUrl = url
                             pairingPin = s.pairingPin
                             qrBitmap = QrCodeUtils.generate(url)
-                            caServer = runCatching { CaServer(applicationContext).apply { start() } }.getOrNull()
-                            caUrl = if (caServer != null) "http://$ip:8081/ca.crt" else ""
                             status = getString(R.string.status_server_running)
                             serverStarted = true
                         } catch (e: Exception) {
                             runCatching { server?.stop() }
                             server = null
                             serverUrl = null
-                            caUrl = ""
                             pairingPin = ""
                             status = getString(R.string.status_server_failed, e.message ?: "")
                         } finally {
@@ -316,8 +277,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     when (val c = content) {
                         is Content.None -> HomeScreen(
-                            url = serverUrl ?: "https://$ip:$port",
-                            caUrl = caUrl,
+                            url = serverUrl ?: "http://$ip:$port",
                             pairingPin = pairingPin,
                             status = status,
                             qrBitmap = qrBitmap,
@@ -337,27 +297,6 @@ class MainActivity : ComponentActivity() {
                         is Content.Images -> ImageSlideshowScreen(files = c.files, onBack = { content = Content.None })
                         is Content.Url -> key(c.url) {
                             WebViewScreen(url = c.url)
-                        }
-                        is Content.ScreenShare -> {
-                            val manager = screenShareManager
-                            if (manager != null) {
-                                ScreenShareScreen(
-                                    renderer = manager.renderer,
-                                    onBack = {
-                                        server?.endSession()
-                                        manager.stop()
-                                        content = Content.None
-                                    }
-                                )
-                            } else {
-                                ErrorScreen(
-                                    message = getString(R.string.screen_share_unavailable),
-                                    onBack = {
-                                        server?.endSession()
-                                        content = Content.None
-                                    }
-                                )
-                            }
                         }
                         is Content.Error -> key(c.message) {
                             ErrorScreen(message = c.message, onBack = { content = Content.None })
@@ -410,10 +349,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         try { server?.stop() } catch (_: Exception) {}
-        try { caServer?.stop() } catch (_: Exception) {}
-        caServer = null
-        screenShareManager?.release()
-        screenShareManager = null
         mediaManager.release()
         App.clearCache(this)
     }
