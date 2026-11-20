@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.StatFs
 import android.util.Log
 import app.aivoo.tools.androidprojector.model.UploadedFile
-import app.aivoo.tools.androidprojector.util.HttpsConfig
+import app.aivoo.tools.androidprojector.util.HttpsCaConfig
 import app.aivoo.tools.androidprojector.util.MediaTypeDetector
 import app.aivoo.tools.androidprojector.util.PathUtils
 import app.aivoo.tools.androidprojector.util.RangeParser
@@ -31,7 +31,7 @@ class MediaServer(
 ) : NanoHTTPD(port) {
 
     init {
-        makeSecure(HttpsConfig.getSocketFactory(context), arrayOf("TLSv1.2"))
+        makeSecure(HttpsCaConfig.getSocketFactory(context), arrayOf("TLSv1.2"))
     }
 
     private data class RemoteSession(

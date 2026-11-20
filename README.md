@@ -173,6 +173,18 @@ All routes are under `/`; the first request must pair with the PIN.
 | POST | `/rtc/offer` | Send a WebRTC offer SDP; returns the TV answer |
 | POST | `/rtc/stop` | Stop the screen share |
 
+## Trusted HTTPS on the LAN
+The TV uses HTTPS with a local CA so browsers can trust it without a public certificate.
+
+1. Start the server.
+2. On the phone/laptop, download the CA from `http://<TV_IP>:8081/ca.crt`.
+3. Install it as a certificate authority:
+   - Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate.
+   - iOS: Settings > General > VPN & Device Management > install the profile, then trust it.
+4. Open `https://<TV_IP>:7071/` and pair with the PIN.
+
+If you do not install the CA, the browser will show a certificate warning. If you need zero-warning access without installing a CA, use a trusted HTTPS reverse proxy/tunnel.
+
 ## Configuration
 - Preferred port `7071`; if busy, a free ephemeral port is selected and shown in the URL/QR.
 - HTTPS uses a generated self-signed certificate stored in app-private storage.

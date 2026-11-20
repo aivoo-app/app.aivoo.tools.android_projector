@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun HomeScreen(url: String, pairingPin: String, status: String, qrBitmap: Bitmap?) {
+fun HomeScreen(url: String, caUrl: String, pairingPin: String, status: String, qrBitmap: Bitmap?) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center,
@@ -30,6 +30,10 @@ fun HomeScreen(url: String, pairingPin: String, status: String, qrBitmap: Bitmap
         }
         Spacer(Modifier.height(8.dp))
         Text(status, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (caUrl.isNotBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text("If the browser shows a certificate warning, install the CA from: $caUrl", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(16.dp))
         qrBitmap?.let { bmp ->
             Image(bitmap = bmp.asImageBitmap(), contentDescription = stringResource(R.string.qr_content_description), modifier = Modifier.size(220.dp))

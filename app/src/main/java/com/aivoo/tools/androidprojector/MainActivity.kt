@@ -21,6 +21,7 @@ import app.aivoo.tools.androidprojector.media.MediaManager
 import app.aivoo.tools.androidprojector.media.ScreenShareManager
 import app.aivoo.tools.androidprojector.R
 import app.aivoo.tools.androidprojector.model.ContentType
+import app.aivoo.tools.androidprojector.server.CaServer
 import app.aivoo.tools.androidprojector.server.MediaServer
 import app.aivoo.tools.androidprojector.ui.ErrorScreen
 import app.aivoo.tools.androidprojector.ui.HomeScreen
@@ -52,6 +53,7 @@ sealed class Content {
 
 class MainActivity : ComponentActivity() {
     private var server: MediaServer? = null
+    private var caServer: CaServer? = null
     private val mediaManager = MediaManager(this)
     private var screenShareManager: ScreenShareManager? = null
 
@@ -80,6 +82,7 @@ class MainActivity : ComponentActivity() {
                 var serverStarted by remember { mutableStateOf(false) }
                 var starting by remember { mutableStateOf(false) }
                 var serverUrl by remember { mutableStateOf<String?>(null) }
+                var caUrl by remember { mutableStateOf("") }
                 var pairingPin by remember { mutableStateOf("") }
                 var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
@@ -295,12 +298,15 @@ class MainActivity : ComponentActivity() {
                             serverUrl = url
                             pairingPin = s.pairingPin
                             qrBitmap = QrCodeUtils.generate(url)
+                            caServer = runCatching { CaServer(applicationContext).apply { start() } }.getOrNull()
+                            caUrl = if (caServer != null) "http://$ip:8081/ca.crt" else ""
                             status = getString(R.string.status_server_running)
                             serverStarted = true
                         } catch (e: Exception) {
                             runCatching { server?.stop() }
                             server = null
                             serverUrl = null
+                            caUrl = ""
                             pairingPin = ""
                             status = getString(R.string.status_server_failed, e.message ?: "")
                         } finally {
@@ -311,6 +317,7 @@ class MainActivity : ComponentActivity() {
                     when (val c = content) {
                         is Content.None -> HomeScreen(
                             url = serverUrl ?: "https://$ip:$port",
+                            caUrl = caUrl,
                             pairingPin = pairingPin,
                             status = status,
                             qrBitmap = qrBitmap,
@@ -403,6 +410,8 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         try { server?.stop() } catch (_: Exception) {}
+        try { caServer?.stop() } catch (_: Exception) {}
+        caServer = null
         screenShareManager?.release()
         screenShareManager = null
         mediaManager.release()
