@@ -281,7 +281,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }, {
                                 if (screenShareManager == null) "unavailable"
-                                else (screenShareManager?.lastError ?: "ok")
+                                else (screenShareManager?.lastError ?: screenShareManager?.lastStage ?: "ok")
                             })
                             server = s
                             mediaManager.onStateChanged = { playing, pos ->

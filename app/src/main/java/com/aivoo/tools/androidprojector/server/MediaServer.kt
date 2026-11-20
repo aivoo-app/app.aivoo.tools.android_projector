@@ -358,9 +358,10 @@ class MediaServer(
             onScreenShareStart()
             val answer = onScreenShareOffer(offer)
             if (answer.isNullOrBlank()) {
-                Log.e(TAG, "Screen share answer was null/blank")
+                val detail = onScreenShareStatus()
+                Log.e(TAG, "Screen share answer was null/blank; stage=" + detail)
                 stopScreenShare()
-                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Unable to answer")
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Unable to answer: " + detail)
             }
             val json = JSONObject().put("answer", answer).toString()
             val response = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", json)

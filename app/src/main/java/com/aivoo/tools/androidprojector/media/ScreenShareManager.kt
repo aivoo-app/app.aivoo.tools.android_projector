@@ -57,11 +57,14 @@ class ScreenShareManager(context: Context) {
     private var peerConnection: PeerConnection? = null
     @Volatile var lastError: String? = null
         private set
+    @Volatile var lastStage: String = "idle"
+        private set
 
     @Synchronized
     fun createAnswer(offerSdp: String): String? {
         stop()
         lastError = null
+        lastStage = "configure"
         try {
         val iceServers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
@@ -71,6 +74,7 @@ class ScreenShareManager(context: Context) {
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
         }
 
+        lastStage = "create_peer_connection"
         val pc = factory.createPeerConnection(configuration, object : PeerConnection.Observer {
             override fun onSignalingChange(signalingDescription: PeerConnection.SignalingState?) {}
             override fun onIceConnectionChange(iceConnectionState: PeerConnection.IceConnectionState?) {}
@@ -106,6 +110,7 @@ class ScreenShareManager(context: Context) {
             return null
         }
         peerConnection = pc
+        lastStage = "add_transceivers"
 
         // Receive-only transceivers matching the browser's video/audio m-lines.
         pc.addTransceiver(
@@ -117,6 +122,7 @@ class ScreenShareManager(context: Context) {
             RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
         )
 
+        lastStage = "set_remote_description"
         val remoteLatch = CountDownLatch(1)
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {}
@@ -130,8 +136,13 @@ class ScreenShareManager(context: Context) {
                 remoteLatch.countDown()
             }
         }, SessionDescription(SessionDescription.Type.OFFER, offerSdp))
-        remoteLatch.await(5, TimeUnit.SECONDS)
+        if (!remoteLatch.await(5, TimeUnit.SECONDS)) {
+            lastError = "Timed out setting remote description"
+            lastStage = "failed"
+            return null
+        }
 
+        lastStage = "create_answer"
         val answerLatch = CountDownLatch(1)
         var answer: SessionDescription? = null
         pc.createAnswer(object : SdpObserver {
@@ -148,12 +159,17 @@ class ScreenShareManager(context: Context) {
                 lastError = "Answer description failed: ${message ?: "unknown"}"
             }
         }, MediaConstraints())
-        answerLatch.await(5, TimeUnit.SECONDS)
+        if (!answerLatch.await(5, TimeUnit.SECONDS)) {
+            lastError = "Timed out creating answer SDP"
+            lastStage = "failed"
+            return null
+        }
         val localAnswer = answer ?: run {
             lastError = lastError ?: "No answer SDP produced"
             return null
         }
 
+        lastStage = "set_local_description"
         val localLatch = CountDownLatch(1)
         pc.setLocalDescription(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {}
@@ -167,11 +183,19 @@ class ScreenShareManager(context: Context) {
                 localLatch.countDown()
             }
         }, localAnswer)
-        localLatch.await(5, TimeUnit.SECONDS)
+        if (!localLatch.await(5, TimeUnit.SECONDS)) {
+            lastError = "Timed out setting local description"
+            lastStage = "failed"
+            return null
+        }
+
+        lastStage = "wait_ice"
         waitForIce(pc)
+        lastStage = "done"
         return pc.localDescription?.description
         } catch (e: Exception) {
             lastError = e.message ?: e.javaClass.simpleName
+            lastStage = "failed"
             stop()
             return null
         }
