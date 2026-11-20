@@ -6,6 +6,7 @@ data class UploadedFile(
     val id: String = java.util.UUID.randomUUID().toString(),
     val name: String,
     val path: String,
+    val displayName: String? = null,
     val mimeType: String? = null,
     val type: ContentType = ContentType.UNKNOWN,
     val size: Long = 0L,

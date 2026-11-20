@@ -1,12 +1,15 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package app.aivoo.tools.androidprojector.media
 
 import android.content.Context
+import android.net.Uri
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.audio.AudioSink
-import androidx.media3.exoplayer.audio.DefaultAudioSink
+import java.io.File
 
 class MediaManager(private val context: Context) {
     var player: ExoPlayer? = null
@@ -14,18 +17,14 @@ class MediaManager(private val context: Context) {
     var onStateChanged: ((Boolean, Long) -> Unit)? = null
 
     fun createPlayer(): ExoPlayer {
-        val renderersFactory = object : DefaultRenderersFactory(context) {
-            override fun buildAudioSink(
-                context: Context,
-                enableFloatOutput: Boolean,
-                enableAudioTrackPlaybackParams: Boolean,
-            ): AudioSink {
-                return DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(LiveAudioProcessor()))
-                    .build()
-            }
-        }
-        val p = ExoPlayer.Builder(context).setRenderersFactory(renderersFactory).build()
+        player?.let { return it }
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+        val p = ExoPlayer.Builder(context)
+            .setAudioAttributes(audioAttributes, true)
+            .build()
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 onStateChanged?.invoke(isPlaying, p.currentPosition)
@@ -43,13 +42,14 @@ class MediaManager(private val context: Context) {
 
     fun playFile(path: String) {
         val p = player ?: createPlayer()
-        p.setMediaItem(MediaItem.fromUri("file://$path"))
+        p.setMediaItem(MediaItem.fromUri(Uri.fromFile(File(path))))
         p.prepare()
         p.play()
     }
 
     fun release() {
-        player?.release()
+        val p = player ?: return
+        p.release()
         player = null
     }
 }

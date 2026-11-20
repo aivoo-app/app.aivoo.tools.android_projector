@@ -29,7 +29,8 @@ object UpdateManager {
             conn.connectTimeout = 10000
             conn.readTimeout = 10000
             if (conn.responseCode != 200) return@withContext null
-            val json = conn.inputStream.bufferedReader().readText()
+            val json = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
             val obj = JSONObject(json)
             val tag = obj.optString("tag_name")
             val assets = obj.optJSONArray("assets") ?: return@withContext null
@@ -51,7 +52,7 @@ object UpdateManager {
     fun isUpdateAvailable(context: Context, latest: ReleaseInfo): Boolean {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val installed = prefs.getString(KEY_TAG, "v" + BuildConfig.VERSION_NAME) ?: "v" + BuildConfig.VERSION_NAME
-        return latest.tagName != installed
+        return VersionUtils.isNewer(latest.tagName, installed)
     }
 
     suspend fun download(context: Context, url: String, onProgress: (Int) -> Unit = {}): File? = withContext(Dispatchers.IO) {
@@ -60,6 +61,10 @@ object UpdateManager {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000
             conn.readTimeout = 30000
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                conn.disconnect()
+                return@withContext null
+            }
             val total = conn.contentLength
             conn.inputStream.use { input ->
                 file.outputStream().use { out ->

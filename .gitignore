@@ -21,3 +21,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Others
+.opencode/
+.dev/
+release.keystore
+*.jks
+*.keystore
+keystore.properties

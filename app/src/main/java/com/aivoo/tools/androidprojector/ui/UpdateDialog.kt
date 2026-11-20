@@ -5,6 +5,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import app.aivoo.tools.androidprojector.R
 
 @Composable
 fun UpdateDialog(
@@ -14,9 +16,9 @@ fun UpdateDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Update available") },
-        text = { Text("A new version ($version) is available. Download and install now?") },
-        confirmButton = { Button(onClick = onDownload) { Text("Update") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Later") } },
+        title = { Text(stringResource(R.string.update_title)) },
+        text = { Text(stringResource(R.string.update_message, version)) },
+        confirmButton = { Button(onClick = onDownload) { Text(stringResource(R.string.update)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.later)) } },
     )
 }

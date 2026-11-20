@@ -1,3 +1,45 @@
 <resources>
     <string name="app_name">Android TV Projector</string>
+
+    <!-- Start screen -->
+    <string name="start_title">Android TV Projector</string>
+    <string name="developed_by">Developed by Aimon Islam</string>
+    <string name="company">Company: AIVOO</string>
+    <string name="website">Website: https://aivoo.app</string>
+    <string name="start_server">Start Server</string>
+    <string name="starting">Starting…</string>
+
+    <!-- Home screen -->
+    <string name="server_url">Server: %1$s</string>
+    <string name="qr_content_description">Pairing QR code</string>
+    <string name="qr_hint">Scan to open the upload page. The URL contains a private pairing token.</string>
+    <string name="upload_help">Upload files or submit URLs from the web page.</string>
+
+    <!-- Status -->
+    <string name="status_waiting">Waiting for upload…</string>
+    <string name="status_starting_server">Starting server…</string>
+    <string name="status_server_running">Server running</string>
+    <string name="status_received">Received: %1$s</string>
+    <string name="status_file_shared">File shared: %1$s</string>
+    <string name="status_files_updated">Files updated</string>
+    <string name="status_server_failed">Server failed: %1$s</string>
+    <string name="status_update_failed">Update failed: %1$s</string>
+
+    <!-- Content -->
+    <string name="loading">Loading...</string>
+    <string name="unsupported_file">Unsupported or unknown file type</string>
+    <string name="pdf_open_failed">Unable to open PDF</string>
+    <string name="pdf_render_failed">Unable to render page %1$d</string>
+    <string name="page_format">Page %1$d / %2$d</string>
+    <string name="image_not_found">Image not found</string>
+    <string name="image_decode_failed">Unable to decode image</string>
+    <string name="image_index">%1$d / %2$d</string>
+
+    <!-- Error / update -->
+    <string name="error_title">Error</string>
+    <string name="back">Back</string>
+    <string name="update_title">Update available</string>
+    <string name="update_message">A new version (%1$s) is available. Download and install now?</string>
+    <string name="update">Update</string>
+    <string name="later">Later</string>
 </resources>
