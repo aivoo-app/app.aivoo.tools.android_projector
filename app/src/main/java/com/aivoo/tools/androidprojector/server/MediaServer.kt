@@ -51,6 +51,7 @@ class MediaServer(
     companion object {
         private const val TAG = "MediaServer"
         private const val MAX_UPLOAD_BYTES = 512L * 1024 * 1024 // 512 MB
+        private const val MAX_RTC_OFFER_BYTES = 64L * 1024
         private const val MIN_FREE_BYTES = 64L * 1024 * 1024 // 64 MB headroom
         private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "ts")
         private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "avif")
@@ -334,13 +335,16 @@ class MediaServer(
     }
 
     private fun handleRtcOffer(session: IHTTPSession): Response {
-        val files = mutableMapOf<String, String>()
-        try {
-            session.parseBody(files)
-        } catch (_: Exception) {
+        val contentLength = session.headers["content-length"]?.toLongOrNull() ?: 0L
+        if (contentLength > MAX_RTC_OFFER_BYTES) {
+            return newFixedLengthResponse(Response.Status.PAYLOAD_TOO_LARGE, "text/plain", "Offer too large")
         }
-        val offer = session.parameters["offer"]?.firstOrNull()?.trim()
-        if (offer.isNullOrBlank()) {
+        val offer = try {
+            String(session.inputStream.readBytes(), Charsets.UTF_8).trim()
+        } catch (e: Exception) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Unable to read offer")
+        }
+        if (offer.isBlank()) {
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "offer required")
         }
         val busy = synchronized(sessionLock) {
@@ -673,7 +677,7 @@ class MediaServer(
                     const offer = await pc.createOffer();
                     await pc.setLocalDescription(offer);
                     await waitIce(pc);
-                    const res = await fetch('rtc/offer', { method:'POST', body: new URLSearchParams({ offer: pc.localDescription.sdp }) });
+                    const res = await fetch('rtc/offer', { method:'POST', headers: {'Content-Type': 'text/plain'}, body: pc.localDescription.sdp });
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) {
                       const st = await fetch('rtc/status').then(r => r.json()).catch(() => ({}));
