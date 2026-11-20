@@ -744,3 +744,55 @@ Phase 1 was started after Phase 0. The following correctness/state items are imp
 - Panning is bounded by `clipToBounds` and reset on page change.
 - Final lint: 0 errors, 20 warnings, 2 hints.
 - Updated `androidx.exifinterface` to 1.4.2, ZXing to 3.5.4, and AndroidX Test ext to 1.3.0; kept `annotation-experimental` at 1.4.1 because 1.6.0 requires minSdk 23.
+
+---
+
+## 10. Screen share, HTTPS, and global session (2026-11-20)
+
+Implemented after the QA plan.
+
+### HTTPS
+- Added `HttpsConfig` with a generated self-signed certificate (BouncyCastle).
+- Certificate includes SAN entries for `localhost`, `127.0.0.1`, and the TV's LAN IP.
+- NanoHTTPD now uses `makeSecure()` with an `SSLServerSocketFactory`.
+- QR/URLs now use `https://`.
+- Browsers will show a one-time certificate warning; Safari may require trusting the certificate.
+
+### Global session lock
+- Added `POST /session/claim`, `POST /session/heartbeat`, `DELETE /session`, and `GET /session`.
+- The first browser to claim the session receives an HttpOnly, Secure, SameSite cookie.
+- A second device gets a minimal “TV is in use by another device” page and cannot access the upload/share UI.
+- Heartbeat timeout is 15 seconds.
+- Session is released on `DELETE`, TV Back/Home, or timeout.
+- All content routes (`/upload`, `/url`, `/media`, `/files`, `/listen`, `/pdf`, `/video`, `/rtc`) require the active session.
+- Full UI is served at `/<token>/app`; minimal connecting page at `/<token>/`.
+
+### Screen share
+- Added `io.getstream:stream-webrtc-android:1.3.10`.
+- Added `ScreenShareManager` with `PeerConnectionFactory`, `EglBase`, `SurfaceViewRenderer`, SDP offer/answer, ICE gathering, and video/audio receive transceivers.
+- Added `Content.ScreenShare` and `ScreenShareScreen`.
+- Browser `getDisplayMedia()` flow with video + audio, non-trickle ICE, and `RTCPeerConnection`.
+- Added `/rtc/offer` and `/rtc/stop`.
+- Screen share is exclusive; second share attempt gets 409.
+- TV stops ExoPlayer and shows the remote screen; Back stops the share and releases the global session.
+
+### Browser support
+- Chrome/Edge desktop: best; screen/window/tab + audio.
+- Firefox desktop: screen + best-effort audio.
+- Safari desktop: screen + limited audio; certificate trust may be required.
+- Phone browsers: feature-detected; generally unsupported for screen capture; shows a clear message.
+
+### Verification
+- `./gradlew testDebugUnitTest` -> PASS (16/16).
+- `./gradlew lintDebug` -> PASS, 0 errors, 23 warnings, 2 hints.
+- `./gradlew assembleDebug` -> PASS.
+- `./gradlew assembleRelease` -> PASS; targetSdk 35, version 1.2.3, signer `CN=QA Release`.
+- Release APK contains WebRTC native libraries.
+
+### Still manual/device-only
+- Real TV/browser screen-share negotiation and media flow.
+- Safari certificate trust.
+- Audio capture/output on each browser.
+- Phone-browser unsupported behavior.
+- TURN configuration for remote networks.
+- Long-run screen-share soak.

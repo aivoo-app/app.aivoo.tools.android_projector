@@ -17,6 +17,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import app.aivoo.tools.androidprojector.media.MediaManager
+import app.aivoo.tools.androidprojector.media.ScreenShareManager
 import app.aivoo.tools.androidprojector.R
 import app.aivoo.tools.androidprojector.model.ContentType
 import app.aivoo.tools.androidprojector.server.MediaServer
@@ -24,6 +25,7 @@ import app.aivoo.tools.androidprojector.ui.ErrorScreen
 import app.aivoo.tools.androidprojector.ui.HomeScreen
 import app.aivoo.tools.androidprojector.ui.ImageSlideshowScreen
 import app.aivoo.tools.androidprojector.ui.PdfViewerScreen
+import app.aivoo.tools.androidprojector.ui.ScreenShareScreen
 import app.aivoo.tools.androidprojector.ui.StartScreen
 import app.aivoo.tools.androidprojector.ui.UpdateDialog
 import app.aivoo.tools.androidprojector.ui.VideoPlayerScreen
@@ -43,12 +45,14 @@ sealed class Content {
     data class Video(val file: File) : Content()
     data class Images(val files: List<File>) : Content()
     data class Url(val url: String) : Content()
+    data class ScreenShare(val sessionId: String) : Content()
     data class Error(val message: String) : Content()
 }
 
 class MainActivity : ComponentActivity() {
     private var server: MediaServer? = null
     private val mediaManager = MediaManager(this)
+    private var screenShareManager: ScreenShareManager? = null
 
     private val imageFiles = mutableListOf<File>()
     private var currentVideoFile: File? = null
@@ -57,6 +61,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        screenShareManager = runCatching { ScreenShareManager(this) }.getOrNull()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
@@ -118,13 +123,15 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(ip, serverStarted) {
                     val s = server ?: return@LaunchedEffect
                     if (serverStarted) {
-                        val url = "http://$ip:$port/${s.token}/"
+                        val url = "https://$ip:$port/${s.token}/"
                         serverUrl = url
                         qrBitmap = QrCodeUtils.generate(url)
                     }
                 }
 
                 BackHandler(enabled = serverStarted && content !is Content.None) {
+                    server?.endSession()
+                    screenShareManager?.stop()
                     content = Content.None
                     server?.currentFile = null
                     server?.currentPlaying = false
@@ -244,6 +251,30 @@ class MainActivity : ComponentActivity() {
                                     }
                                     status = getString(R.string.status_files_updated)
                                 }
+                            }, { active ->
+                                runOnUiThread {
+                                    if (!active && content is Content.ScreenShare) {
+                                        screenShareManager?.stop()
+                                        content = Content.None
+                                    }
+                                    status = getString(if (active) R.string.status_remote_active else R.string.status_waiting)
+                                }
+                            }, {
+                                runOnUiThread {
+                                    mediaManager.player?.pause()
+                                    content = Content.ScreenShare("active")
+                                    status = getString(R.string.status_screen_share)
+                                }
+                            }, { offer ->
+                                screenShareManager?.createAnswer(offer)
+                            }, {
+                                runOnUiThread {
+                                    screenShareManager?.stop()
+                                    if (content is Content.ScreenShare) {
+                                        content = Content.None
+                                    }
+                                    status = getString(R.string.status_waiting)
+                                }
                             })
                             server = s
                             mediaManager.onStateChanged = { playing, pos ->
@@ -253,7 +284,7 @@ class MainActivity : ComponentActivity() {
                                 server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
                             }
                             s.start()
-                            val url = "http://$ip:$selectedPort/${s.token}/"
+                            val url = "https://$ip:$selectedPort/${s.token}/"
                             serverUrl = url
                             qrBitmap = QrCodeUtils.generate(url)
                             status = getString(R.string.status_server_running)
@@ -270,7 +301,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     when (val c = content) {
                         is Content.None -> HomeScreen(
-                            url = serverUrl ?: "http://$ip:$port",
+                            url = serverUrl ?: "https://$ip:$port",
                             status = status,
                             qrBitmap = qrBitmap,
                         )
@@ -289,6 +320,27 @@ class MainActivity : ComponentActivity() {
                         is Content.Images -> ImageSlideshowScreen(files = c.files, onBack = { content = Content.None })
                         is Content.Url -> key(c.url) {
                             WebViewScreen(url = c.url)
+                        }
+                        is Content.ScreenShare -> {
+                            val manager = screenShareManager
+                            if (manager != null) {
+                                ScreenShareScreen(
+                                    renderer = manager.renderer,
+                                    onBack = {
+                                        server?.endSession()
+                                        manager.stop()
+                                        content = Content.None
+                                    }
+                                )
+                            } else {
+                                ErrorScreen(
+                                    message = getString(R.string.screen_share_unavailable),
+                                    onBack = {
+                                        server?.endSession()
+                                        content = Content.None
+                                    }
+                                )
+                            }
                         }
                         is Content.Error -> key(c.message) {
                             ErrorScreen(message = c.message, onBack = { content = Content.None })
@@ -341,6 +393,8 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         try { server?.stop() } catch (_: Exception) {}
+        screenShareManager?.release()
+        screenShareManager = null
         mediaManager.release()
         App.clearCache(this)
     }

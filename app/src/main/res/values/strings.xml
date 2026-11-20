@@ -22,6 +22,9 @@
     <string name="status_received">Received: %1$s</string>
     <string name="status_file_shared">File shared: %1$s</string>
     <string name="status_files_updated">Files updated</string>
+    <string name="status_remote_active">Remote session active</string>
+    <string name="status_screen_share">Screen share active</string>
+    <string name="screen_share_unavailable">Screen sharing is unavailable on this device.</string>
     <string name="status_server_failed">Server failed: %1$s</string>
     <string name="status_update_failed">Update failed: %1$s</string>
 

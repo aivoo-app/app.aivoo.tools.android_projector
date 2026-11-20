@@ -4,11 +4,13 @@ import android.content.Context
 import android.os.StatFs
 import android.util.Log
 import app.aivoo.tools.androidprojector.model.UploadedFile
+import app.aivoo.tools.androidprojector.util.HttpsConfig
 import app.aivoo.tools.androidprojector.util.MediaTypeDetector
 import app.aivoo.tools.androidprojector.util.PathUtils
 import app.aivoo.tools.androidprojector.util.RangeParser
 import app.aivoo.tools.androidprojector.util.UrlUtils
 import fi.iki.elonen.NanoHTTPD
+import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.security.SecureRandom
@@ -21,7 +23,27 @@ class MediaServer(
     private val onPdfCommand: (String) -> Unit = {},
     private val onVideoCommand: (String) -> Unit = {},
     private val onFilesChanged: () -> Unit = {},
+    private val onSessionChanged: (Boolean) -> Unit = {},
+    private val onScreenShareStart: () -> Unit = {},
+    private val onScreenShareOffer: (String) -> String? = { null },
+    private val onScreenShareStop: () -> Unit = {},
 ) : NanoHTTPD(port) {
+
+    init {
+        makeSecure(HttpsConfig.getSocketFactory(context), arrayOf("TLSv1.2"))
+    }
+
+    private data class RemoteSession(
+        val id: String,
+        val clientId: String,
+        val createdAt: Long,
+        var lastSeen: Long,
+    )
+
+    private sealed interface ClaimResult {
+        data class Ok(val sessionId: String) : ClaimResult
+        data object Busy : ClaimResult
+    }
 
     companion object {
         private const val TAG = "MediaServer"
@@ -61,7 +83,118 @@ class MediaServer(
     @Volatile var videoDurationMs: Long = 0L
     @Volatile var videoEventId: Long = 1
     @Volatile private var listenerCount: Int = 0
+    @Volatile private var activeSession: RemoteSession? = null
+    @Volatile private var screenShareActive: Boolean = false
+    private val sessionLock = Any()
     private val uploadedFiles = java.util.Collections.synchronizedList(mutableListOf<String>())
+    private val sessionTimeoutMs = 15_000L
+    private val sessionCookieName = "tv_session"
+    private val sessionCookiePath = "/$token/"
+
+    private fun clearExpiredSession(): Boolean {
+        val expired = synchronized(sessionLock) {
+            val current = activeSession ?: return@synchronized false
+            if (current.lastSeen + sessionTimeoutMs < System.currentTimeMillis()) {
+                activeSession = null
+                true
+            } else {
+                false
+            }
+        }
+        if (expired) {
+            stopScreenShare()
+            onSessionChanged(false)
+        }
+        return expired
+    }
+
+    fun hasActiveSession(): Boolean {
+        clearExpiredSession()
+        return activeSession != null
+    }
+
+    fun endSession() {
+        val hadSession = synchronized(sessionLock) {
+            val had = activeSession != null
+            activeSession = null
+            had
+        }
+        stopScreenShare()
+        if (hadSession) onSessionChanged(false)
+    }
+
+    private fun claimSession(clientId: String): ClaimResult {
+        clearExpiredSession()
+        return synchronized(sessionLock) {
+        val current = activeSession
+        if (current != null && current.lastSeen + sessionTimeoutMs >= System.currentTimeMillis()) {
+            if (current.clientId == clientId) {
+                current.lastSeen = System.currentTimeMillis()
+                return@synchronized ClaimResult.Ok(current.id)
+            }
+            return@synchronized ClaimResult.Busy
+        }
+        val session = RemoteSession(
+            id = generateToken(),
+            clientId = clientId,
+            createdAt = System.currentTimeMillis(),
+            lastSeen = System.currentTimeMillis(),
+        )
+        activeSession = session
+        onSessionChanged(true)
+        ClaimResult.Ok(session.id)
+        }
+    }
+
+    private fun heartbeat(sessionId: String): Boolean {
+        if (clearExpiredSession()) return false
+        return synchronized(sessionLock) {
+            val current = activeSession ?: return@synchronized false
+            if (current.id != sessionId) return@synchronized false
+            current.lastSeen = System.currentTimeMillis()
+            true
+        }
+    }
+
+    private fun releaseSession(sessionId: String): Boolean {
+        val released = synchronized(sessionLock) {
+            val current = activeSession ?: return@synchronized false
+            if (current.id != sessionId) return@synchronized false
+            activeSession = null
+            onSessionChanged(false)
+            true
+        }
+        if (released) stopScreenShare()
+        return released
+    }
+
+    private fun requireSession(session: IHTTPSession): Boolean {
+        if (clearExpiredSession()) return false
+        val sessionId = session.cookies.read(sessionCookieName) ?: return false
+        return synchronized(sessionLock) {
+            val current = activeSession ?: return@synchronized false
+            if (current.id != sessionId) return@synchronized false
+            current.lastSeen = System.currentTimeMillis()
+            true
+        }
+    }
+
+    private fun stopScreenShare() {
+        val wasActive = synchronized(sessionLock) {
+            val active = screenShareActive
+            screenShareActive = false
+            active
+        }
+        if (wasActive) onScreenShareStop()
+    }
+
+    private fun cookieHeader(sessionId: String): String {
+        return "$sessionCookieName=$sessionId; Path=$sessionCookiePath; HttpOnly; Secure; SameSite=Strict"
+    }
+
+    private fun clearCookieHeader(): String {
+        return "$sessionCookieName=; Path=$sessionCookiePath; Max-Age=0; Secure; SameSite=Strict"
+    }
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
@@ -81,6 +214,28 @@ class MediaServer(
             return redirect
         }
 
+        if (route == "/" && method == Method.GET) {
+            return serveLanding()
+        }
+        if (route == "/app" && method == Method.GET) {
+            if (!requireSession(session)) {
+                return newFixedLengthResponse(Response.Status.UNAUTHORIZED, "text/plain", "Session required")
+            }
+            return serveApp()
+        }
+        if (route == "/session/claim" && method == Method.POST) {
+            return handleSessionClaim(session)
+        }
+        if (route == "/session/heartbeat" && method == Method.POST) {
+            return handleSessionHeartbeat(session)
+        }
+        if (route == "/session" && method == Method.DELETE) {
+            return handleSessionDelete(session)
+        }
+        if (route == "/session" && method == Method.GET) {
+            return handleSessionStatus()
+        }
+
         if (method == Method.POST && route == "/upload") {
             if (session.headers["transfer-encoding"]?.contains("chunked", ignoreCase = true) == true) {
                 return newFixedLengthResponse(Response.Status.LENGTH_REQUIRED, "text/plain", "Content-Length required")
@@ -96,10 +251,13 @@ class MediaServer(
             }
         }
 
+        if (!requireSession(session)) {
+            return newFixedLengthResponse(Response.Status.CONFLICT, "text/plain", "Session required")
+        }
+
         Log.d(TAG, "$method $route")
         return try {
             when {
-                route == "/" && method == Method.GET -> serveLanding()
                 route == "/upload" && method == Method.POST -> handleUpload(session)
                 route == "/url" && method == Method.POST -> handleUrl(session)
                 route.startsWith("/media/") && (method == Method.GET || method == Method.HEAD) -> serveMedia(session, route.removePrefix("/media/"))
@@ -113,6 +271,8 @@ class MediaServer(
                 route == "/files/clear" && method == Method.POST -> handleClear()
                 route == "/listen/start" && method == Method.POST -> handleListen(true)
                 route == "/listen/stop" && method == Method.POST -> handleListen(false)
+                route == "/rtc/offer" && method == Method.POST -> handleRtcOffer(session)
+                route == "/rtc/stop" && method == Method.POST -> handleRtcStop()
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
             }
         } catch (e: Exception) {
@@ -120,7 +280,146 @@ class MediaServer(
             newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Internal error")
         }
     }
+
+    private fun handleSessionClaim(session: IHTTPSession): Response {
+        val files = mutableMapOf<String, String>()
+        try {
+            session.parseBody(files)
+        } catch (_: Exception) {
+        }
+        val clientId = session.parameters["clientId"]?.firstOrNull()?.trim()
+        if (clientId.isNullOrBlank()) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "clientId required")
+        }
+        return when (val result = claimSession(clientId)) {
+            is ClaimResult.Ok -> {
+                val response = newFixedLengthResponse(Response.Status.OK, "text/plain", "OK")
+                response.addHeader("Set-Cookie", cookieHeader(result.sessionId))
+                response
+            }
+            ClaimResult.Busy -> newFixedLengthResponse(Response.Status.CONFLICT, "text/plain", "session_in_progress")
+        }
+    }
+
+    private fun handleSessionHeartbeat(session: IHTTPSession): Response {
+        val sessionId = session.cookies.read(sessionCookieName)
+        if (sessionId == null || !heartbeat(sessionId)) {
+            return newFixedLengthResponse(Response.Status.GONE, "text/plain", "session_expired")
+        }
+        return newFixedLengthResponse(Response.Status.OK, "text/plain", "OK")
+    }
+
+    private fun handleSessionDelete(session: IHTTPSession): Response {
+        val sessionId = session.cookies.read(sessionCookieName)
+        val released = sessionId != null && releaseSession(sessionId)
+        val response = newFixedLengthResponse(
+            if (released) Response.Status.OK else Response.Status.GONE,
+            "text/plain",
+            if (released) "released" else "session_expired",
+        )
+        response.addHeader("Set-Cookie", clearCookieHeader())
+        return response
+    }
+
+    private fun handleSessionStatus(): Response {
+        val active = hasActiveSession()
+        val json = "{\"active\":$active}"
+        val response = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", json)
+        response.addHeader("Cache-Control", "no-store")
+        return response
+    }
+
+    private fun handleRtcOffer(session: IHTTPSession): Response {
+        val files = mutableMapOf<String, String>()
+        try {
+            session.parseBody(files)
+        } catch (_: Exception) {
+        }
+        val offer = session.parameters["offer"]?.firstOrNull()?.trim()
+        if (offer.isNullOrBlank()) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "offer required")
+        }
+        val busy = synchronized(sessionLock) {
+            if (screenShareActive) {
+                true
+            } else {
+                screenShareActive = true
+                false
+            }
+        }
+        if (busy) {
+            return newFixedLengthResponse(Response.Status.CONFLICT, "text/plain", "screen_share_in_progress")
+        }
+        try {
+            onScreenShareStart()
+            val answer = onScreenShareOffer(offer)
+            if (answer.isNullOrBlank()) {
+                stopScreenShare()
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Unable to answer")
+            }
+            val json = JSONObject().put("answer", answer).toString()
+            val response = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", json)
+            response.addHeader("Cache-Control", "no-store")
+            return response
+        } catch (e: Exception) {
+            Log.e(TAG, "screen share failed", e)
+            stopScreenShare()
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Screen share failed")
+        }
+    }
+
+    private fun handleRtcStop(): Response {
+        stopScreenShare()
+        return newFixedLengthResponse(Response.Status.OK, "text/plain", "stopped")
+    }
+
     private fun serveLanding(): Response {
+        val html = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <meta name="referrer" content="no-referrer" />
+              <title>Android TV Projector</title>
+              <style>
+                body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0b1020; color:#e2e8f0; font-family:system-ui,-apple-system,sans-serif; padding:24px; }
+                .card { background:rgba(30,41,59,.85); border:1px solid rgba(148,163,184,.2); border-radius:18px; padding:28px; max-width:420px; width:100%; text-align:center; }
+                button { margin-top:14px; width:100%; padding:12px; border:none; border-radius:10px; background:#6366f1; color:white; font-size:15px; cursor:pointer; }
+                .hint { color:#94a3b8; font-size:13px; margin-top:10px; }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h1>Android TV Projector</h1>
+                <div id="msg" class="hint">Connecting...</div>
+                <button onclick="claim()">Retry</button>
+              </div>
+              <script>
+                const clientId = sessionStorage.getItem('tv_client') || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+                sessionStorage.setItem('tv_client', clientId);
+                function setMsg(t){ document.getElementById('msg').textContent = t; }
+                async function claim(){
+                  try {
+                    const res = await fetch('session/claim', {method:'POST', body:new URLSearchParams({clientId})});
+                    if (res.ok) { location.replace('app'); return; }
+                    if (res.status === 409) { setMsg('TV is in use by another device.'); return; }
+                    throw new Error('HTTP ' + res.status);
+                  } catch(e) { setMsg('Unable to connect: ' + e); }
+                }
+                claim();
+              </script>
+            </body>
+            </html>
+        """.trimIndent()
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html).apply {
+            addHeader("Cache-Control", "no-store")
+            addHeader("X-Content-Type-Options", "nosniff")
+            addHeader("Referrer-Policy", "no-referrer")
+        }
+    }
+
+    private fun serveApp(): Response {
         val html = """
             <!DOCTYPE html>
             <html lang="en">
@@ -171,6 +470,7 @@ class MediaServer(
                   <div class="mode" data-mode="pdf">PDF</div>
                   <div class="mode" data-mode="video">Video</div>
                   <div class="mode" data-mode="files">Files</div>
+                  <div class="mode" data-mode="share">Share</div>
                 </div>
 
                 <div class="panel active" id="panel-upload">
@@ -198,7 +498,16 @@ class MediaServer(
                   </div>
                 </div>
 
-                                <div class="panel" id="panel-files">
+                                <div class="panel" id="panel-share">
+                  <p class="sub" style="margin-bottom:12px;">Share a screen, window, or tab. Audio is included when the browser supports it.</p>
+                  <div class="btn-row">
+                    <button class="btn-green" id="shareBtn">Share screen</button>
+                    <button class="btn-red" id="stopShareBtn">Stop</button>
+                  </div>
+                  <div class="hint">Desktop Chrome/Edge/Firefox/Safari. Phone browsers may not support screen capture.</div>
+                </div>
+
+                <div class="panel" id="panel-files">
                   <p class="sub" style="margin-bottom:12px;">Shared files (temporary).</p>
                   <div id="fileList" style="display:flex;flex-direction:column;gap:8px;"></div>
                   <div class="btn-row" style="margin-top:12px;">
@@ -230,11 +539,98 @@ class MediaServer(
                 </div>
 
                 <div class="status" id="status">Ready.</div>
+                <div class="btn-row" style="margin-top:12px;">
+                  <button class="btn-red" onclick="leaveSession()">Leave session</button>
+                </div>
                 <div class="footer">Developed by Aimon Islam &middot; AIVOO &middot; <a href="https://aivoo.app">aivoo.app</a></div>
               </div>
               <script>
                 const status = document.getElementById('status');
                 function setStatus(t){ status.textContent = t; }
+
+                let heartbeatTimer = setInterval(async () => {
+                  try {
+                    const res = await fetch('session/heartbeat', {method:'POST'});
+                    if (res.status === 410 || res.status === 409) {
+                      clearInterval(heartbeatTimer);
+                      setStatus('Session ended.');
+                      setTimeout(() => { location.href = '.'; }, 800);
+                    }
+                  } catch (e) {}
+                }, 2000);
+
+                window.addEventListener('pagehide', () => {
+                  fetch('session', {method:'DELETE', keepalive:true}).catch(()=>{});
+                });
+
+                async function leaveSession(){
+                  try { await fetch('session', {method:'DELETE'}); } catch(e) {}
+                  location.href = '.';
+                }
+
+                let pc = null;
+                let localStream = null;
+                let shareActive = false;
+                function waitIce(connection) {
+                  return new Promise(resolve => {
+                    if (connection.iceGatheringState === 'complete') { resolve(); return; }
+                    let done = false;
+                    const check = () => {
+                      if (done) return;
+                      if (connection.iceGatheringState === 'complete') { done = true; resolve(); }
+                      else setTimeout(check, 100);
+                    };
+                    check();
+                    setTimeout(() => { if (!done) { done = true; resolve(); } }, 5000);
+                  });
+                }
+                async function startShare() {
+                  if (shareActive) return;
+                  if (!window.isSecureContext) { setStatus('Screen sharing requires HTTPS.'); return; }
+                  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                    setStatus('Screen sharing is not supported in this browser. Use desktop Chrome/Edge/Firefox/Safari.');
+                    return;
+                  }
+                  try {
+                    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+                    localStream = stream;
+                    pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+                    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                    pc.onconnectionstatechange = () => {
+                      if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
+                        setStatus('Screen share connection lost.');
+                        stopShare();
+                      }
+                    };
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    await waitIce(pc);
+                    const res = await fetch('rtc/offer', { method:'POST', body: new URLSearchParams({ offer: pc.localDescription.sdp }) });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                    await pc.setRemoteDescription({ type: 'answer', sdp: data.answer });
+                    shareActive = true;
+                    setStatus('Sharing screen...');
+                  } catch (e) {
+                    setStatus('Share failed: ' + e);
+                    stopShare();
+                  }
+                }
+                function stopShare() {
+                  if (localStream) {
+                    localStream.getTracks().forEach(track => track.stop());
+                    localStream = null;
+                  }
+                  if (pc) {
+                    pc.close();
+                    pc = null;
+                  }
+                  shareActive = false;
+                  fetch('rtc/stop', {method:'POST'}).catch(()=>{});
+                  setStatus('Sharing stopped.');
+                }
+                document.getElementById('shareBtn').addEventListener('click', startShare);
+                document.getElementById('stopShareBtn').addEventListener('click', stopShare);
                 document.querySelectorAll('.mode').forEach(m => {
                   m.addEventListener('click', () => {
                     document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active'));

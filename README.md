@@ -1,6 +1,6 @@
 # Android TV Local Media Server
 
-An Android TV app that runs an embedded HTTP server on the TV. A remote browser uploads a file (PDF, video, image, or another file type) or submits a URL; the TV displays the content full-screen. Uploads live only in `cacheDir` and are wiped when the app starts and when the activity is destroyed.
+An Android TV app that runs an embedded HTTPS server on the TV. A remote browser uploads a file (PDF, video, image, or another file type) or submits a URL; the TV displays the content full-screen. Uploads live only in `cacheDir` and are wiped when the app starts and when the activity is destroyed.
 
 ## Table of contents
 - [Features](#features)
@@ -12,7 +12,7 @@ An Android TV app that runs an embedded HTTP server on the TV. A remote browser 
 - [Getting started](#getting-started)
 - [Build & run](#build--run)
 - [Usage (end-to-end)](#usage-end-to-end)
-- [HTTP API](#http-api)
+- [HTTPS API](#https-api)
 - [Configuration](#configuration)
 - [Navigation & input](#navigation--input)
 - [Lifecycle & cleanup](#lifecycle--cleanup)
@@ -24,9 +24,12 @@ An Android TV app that runs an embedded HTTP server on the TV. A remote browser 
 - [License](#license)
 
 ## Features
-- Embedded NanoHTTPD server on port `7071`, with automatic fallback to a free port if `7071` is busy.
+- Embedded NanoHTTPD **HTTPS** server on port `7071`, with automatic fallback to a free port if `7071` is busy.
+- Per-launch pairing token and a self-signed HTTPS certificate (browser shows a one-time certificate warning).
+- One global remote session at a time: a second device sees a busy page and cannot access the upload UI.
+- Browser screen sharing (screen/window/tab) via WebRTC, with audio when supported.
 - Per-launch pairing token embedded in the QR code and URL; requests without it receive `401`.
-- Home screen shows the actual `http://<TV_IP>:<port>/<token>/` URL and upload status.
+- Home screen shows the actual `https://<TV_IP>:<port>/<token>/` URL, QR code, and session status.
 - Multipart file upload (`POST /upload`) and URL submission (`POST /url`).
 - PDF viewer (zoom/pan, double-tap, DPAD-center toggle), ExoPlayer video viewer, image slideshow, and WebView renderer.
 - D-pad/remote navigation, activity-level Back handling, and focus requests.
@@ -37,8 +40,9 @@ An Android TV app that runs an embedded HTTP server on the TV. A remote browser 
 - No persistence: `cacheDir` is cleared on app start and activity destroy.
 
 ## Security model
-- **Pairing token:** every endpoint requires the token as the first path segment: `/<token>/...`. The token is 128-bit random and generated per server start. The QR code contains the full URL.
+- **HTTPS + pairing token:** every endpoint requires HTTPS and the token as the first path segment: `/<token>/...`. The token is 128-bit random and generated per server start. The QR code contains the full URL. A self-signed certificate is used, so browsers show a one-time certificate warning.
 - **No wildcard CORS:** state-changing endpoints are same-origin only.
+- **Global session lock:** the first browser to claim the session owns the TV; a second browser gets a busy page. Heartbeats expire after 15 seconds, and Back/Home/release frees the session.
 - **No APK auto-install:** unknown files (including APKs/ZIPs) are stored as `.bin` downloads only. The app never launches a package installer from an upload.
 - **Path confinement:** `/media/` accepts only generated, allow-listed names; canonical-path checks reject `..`, separators, and NUL.
 - **Upload limits:** `Content-Length` is checked before parsing; 512 MB cap; free-space check; temp/partial files are removed on failure.
@@ -49,10 +53,10 @@ An Android TV app that runs an embedded HTTP server on the TV. A remote browser 
 ```
 [TV startup]
   -> App.onCreate clears cacheDir
-  -> MainActivity starts NanoHTTPD on 7071 (or a free fallback port)
+  -> MainActivity starts NanoHTTPD over HTTPS on 7071 (or a free fallback port)
   -> Compose shows StartScreen
   -> User starts the server
-  -> HomeScreen shows http://<TV_IP>:<port>/<token>/
+  -> HomeScreen shows https://<TV_IP>:<port>/<token>/
   -> Browser POSTs file/URL under the token prefix
   -> MediaServer saves file to cacheDir, detects type, calls onUpload
   -> MainActivity switches to the renderer screen
@@ -69,8 +73,11 @@ app/src/main/java/com/aivoo/tools/androidprojector/
 ├── model/UploadedFile.kt
 ├── server/MediaServer.kt
 ├── pdf/PdfRendererWrapper.kt
+├── ui/ScreenShareScreen.kt
 ├── media/MediaManager.kt
+├── media/ScreenShareManager.kt
 ├── util/
+│   ├── HttpsConfig.kt
 │   ├── MediaTypeDetector.kt
 │   ├── NetworkUtils.kt
 │   ├── PathUtils.kt
@@ -96,7 +103,9 @@ app/src/main/java/com/aivoo/tools/androidprojector/
 - Jetpack Compose (BOM 2024.10.01), Material3
 - Activity Compose 1.9.3
 - Media3 ExoPlayer + UI 1.4.1
-- NanoHTTPD 2.3.1
+- NanoHTTPD 2.3.1 (HTTPS with a self-signed certificate)
+- WebRTC via `io.getstream:stream-webrtc-android`
+- BouncyCastle for certificate generation
 - ZXing core 3.5.3
 - AndroidX Lifecycle 2.8.6, Coroutines 1.9.0
 - minSdk 21, targetSdk/compileSdk 35
@@ -123,7 +132,7 @@ Use the committed `./gradlew` wrapper, not a system Gradle.
 
 ## Usage (end-to-end)
 1. Launch the app on the TV and press **Start Server**.
-2. The Home screen shows `http://<TV_IP>:<port>/<pairing-token>/` and a QR code.
+2. The Home screen shows `https://<TV_IP>:<port>/<pairing-token>/` and a QR code.
 3. From a phone/laptop on the same LAN, scan the QR code or open the URL. The token is required.
 4. Upload a PDF/video/image, submit a URL, or open the Files tab.
 5. The TV switches to the appropriate viewer. Use the remote:
@@ -134,15 +143,19 @@ Use the committed `./gradlew` wrapper, not a system Gradle.
 
 CLI test:
 ```bash
-curl -F 'file=@test.pdf' 'http://<TV_IP>:<port>/<pairing-token>/upload'
+curl -F 'file=@test.pdf' 'https://<TV_IP>:<port>/<pairing-token>/upload'
 ```
 
-## HTTP API
+## HTTPS API
 All routes are under `/<token>/`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | Landing/upload page |
+| GET | `/` | Minimal connecting page; claims the global session |
+| GET | `/app` | Full upload/share UI (requires active session cookie) |
+| POST | `/session/claim` | Claim the global session; sets `tv_session` cookie |
+| POST | `/session/heartbeat` | Keep the session alive |
+| DELETE | `/session` | Release the session |
 | POST | `/upload` | Multipart file upload (`file` field) |
 | POST | `/url` | URL submission (`url` field) |
 | GET | `/media/<name>` | Serve an uploaded file with Range support |
@@ -156,9 +169,14 @@ All routes are under `/<token>/`.
 | POST | `/pdf/command` | `prev`, `next` |
 | POST | `/listen/start` | Register an audio-sync listener |
 | POST | `/listen/stop` | Unregister an audio-sync listener |
+| POST | `/rtc/offer` | Send a WebRTC offer SDP; returns the TV answer |
+| POST | `/rtc/stop` | Stop the screen share |
 
 ## Configuration
 - Preferred port `7071`; if busy, a free ephemeral port is selected and shown in the URL/QR.
+- HTTPS uses a generated self-signed certificate stored in app-private storage.
+- Global session lock: one browser session at a time; 15-second heartbeat timeout.
+- Screen share: WebRTC; video + best-effort audio; one active share at a time.
 - Pairing token generated per server start.
 - Upload cap: 512 MB; free-space headroom: 64 MB.
 - Cache wipe in `App.onCreate` and `MainActivity.onDestroy`.
@@ -209,9 +227,12 @@ Manual QA still required on a real TV/emulator:
 - No chunked/resumable uploads; requests without `Content-Length` are rejected with `411`.
 - Unknown files are downloads only; APK auto-install has been removed.
 - WebView is not a full browser: no downloads, file chooser, or full Chrome feature set.
+- Screen sharing requires a desktop browser with `getDisplayMedia`; phone browsers generally cannot capture their screen from a web page.
+- Safari/iOS screen capture and audio support are limited; the self-signed certificate must be trusted.
+- Remote/internet screen sharing needs STUN/TURN; same-LAN direct WebRTC is the default.
 - Audio sync is best-effort and depends on browser autoplay policy and network latency.
 - Cache is not wiped on process death/force-stop; only on the next launch and normal activity destroy.
-- No user accounts; the pairing token is the only access control.
+- No user accounts; the pairing token and global session lock are the access control.
 - PDF zoom is capped at 5x and resets when the page changes.
 
 ## Release & signing
