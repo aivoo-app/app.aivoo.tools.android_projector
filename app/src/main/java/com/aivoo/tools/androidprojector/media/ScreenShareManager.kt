@@ -1,6 +1,9 @@
 package app.aivoo.tools.androidprojector.media
 
 import android.content.Context
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
 import org.webrtc.CandidatePairChangeEvent
 import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
@@ -54,15 +57,38 @@ class ScreenShareManager(context: Context) {
         setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
     }
 
+    private val webrtcThread = HandlerThread("ScreenShareWebRTC").apply { start() }
+    private val webrtcHandler = Handler(webrtcThread.looper)
     private var peerConnection: PeerConnection? = null
     @Volatile var lastError: String? = null
         private set
     @Volatile var lastStage: String = "idle"
         private set
 
-    @Synchronized
     fun createAnswer(offerSdp: String): String? {
-        stop()
+        if (Looper.myLooper() == webrtcThread.looper) {
+            return createAnswerInternal(offerSdp)
+        }
+        val latch = CountDownLatch(1)
+        var result: String? = null
+        webrtcHandler.postAtFrontOfQueue {
+            result = try {
+                createAnswerInternal(offerSdp)
+            } catch (e: Exception) {
+                lastError = "${e.javaClass.simpleName}: ${e.message ?: "unknown"}"
+                null
+            }
+            latch.countDown()
+        }
+        if (!latch.await(15, TimeUnit.SECONDS)) {
+            lastError = "Timed out waiting for WebRTC answer thread"
+            return null
+        }
+        return result
+    }
+
+    private fun createAnswerInternal(offerSdp: String): String? {
+        stopInternal()
         lastError = null
         lastStage = "configure"
         try {
@@ -122,11 +148,21 @@ class ScreenShareManager(context: Context) {
             RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
         )
 
+        if (offerSdp.length < 100 || !offerSdp.startsWith("v=0")) {
+            lastError = "Offer SDP is invalid or truncated (${offerSdp.length} chars)"
+            lastStage = "failed"
+            return null
+        }
+
         lastStage = "set_remote_description"
         val remoteLatch = CountDownLatch(1)
+        var remoteSetSuccess = false
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {}
-            override fun onSetSuccess() { remoteLatch.countDown() }
+            override fun onSetSuccess() {
+                remoteSetSuccess = true
+                remoteLatch.countDown()
+            }
             override fun onCreateFailure(message: String?) {
                 lastError = "Remote description failed: ${message ?: "unknown"}"
                 remoteLatch.countDown()
@@ -138,6 +174,11 @@ class ScreenShareManager(context: Context) {
         }, SessionDescription(SessionDescription.Type.OFFER, offerSdp))
         if (!remoteLatch.await(5, TimeUnit.SECONDS)) {
             lastError = "Timed out setting remote description"
+            lastStage = "failed"
+            return null
+        }
+        if (!remoteSetSuccess) {
+            lastError = lastError ?: "Remote description was not set"
             lastStage = "failed"
             return null
         }
@@ -196,7 +237,7 @@ class ScreenShareManager(context: Context) {
         } catch (e: Exception) {
             lastError = e.message ?: e.javaClass.simpleName
             lastStage = "failed"
-            stop()
+            stopInternal()
             return null
         }
     }
@@ -213,15 +254,28 @@ class ScreenShareManager(context: Context) {
         }
     }
 
-    @Synchronized
     fun stop() {
+        if (Looper.myLooper() == webrtcThread.looper) {
+            stopInternal()
+        } else {
+            webrtcHandler.post { stopInternal() }
+        }
+    }
+
+    private fun stopInternal() {
         peerConnection?.close()
         peerConnection = null
         renderer.clearImage()
     }
 
     fun release() {
-        stop()
+        val latch = CountDownLatch(1)
+        webrtcHandler.post {
+            stopInternal()
+            latch.countDown()
+        }
+        latch.await(2, TimeUnit.SECONDS)
+        webrtcThread.quitSafely()
         renderer.release()
         eglBase.release()
         factory.dispose()
