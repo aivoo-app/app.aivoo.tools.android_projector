@@ -11,7 +11,6 @@ import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaStream
-import org.webrtc.MediaStreamTrack
 import org.webrtc.MediaConstraints
 import org.webrtc.SdpObserver
 import org.webrtc.VideoTrack
@@ -136,18 +135,6 @@ class ScreenShareManager(context: Context) {
             return null
         }
         peerConnection = pc
-        lastStage = "add_transceivers"
-
-        // Receive-only transceivers matching the browser's video/audio m-lines.
-        pc.addTransceiver(
-            MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
-            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
-        )
-        pc.addTransceiver(
-            MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
-        )
-
         if (offerSdp.length < 100 || !offerSdp.startsWith("v=0")) {
             lastError = "Offer SDP is invalid or truncated (${offerSdp.length} chars)"
             lastStage = "failed"
