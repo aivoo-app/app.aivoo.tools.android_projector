@@ -27,6 +27,7 @@ class MediaServer(
     private val onScreenShareStart: () -> Unit = {},
     private val onScreenShareOffer: (String) -> String? = { null },
     private val onScreenShareStop: () -> Unit = {},
+    private val onScreenShareStatus: () -> String = { "unavailable" },
 ) : NanoHTTPD(port) {
 
     init {
@@ -210,6 +211,9 @@ class MediaServer(
         val method = session.method
         val route = uri.ifEmpty { "/" }
 
+        if (route == "/favicon.ico") {
+            return newFixedLengthResponse(Response.Status.NO_CONTENT, "text/plain", "")
+        }
         if (route == "/" && method == Method.GET) {
             return serveRoot(session)
         }
@@ -269,6 +273,7 @@ class MediaServer(
                 route == "/listen/stop" && method == Method.POST -> handleListen(false)
                 route == "/rtc/offer" && method == Method.POST -> handleRtcOffer(session)
                 route == "/rtc/stop" && method == Method.POST -> handleRtcStop()
+                route == "/rtc/status" && method == Method.GET -> handleRtcStatus()
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found")
             }
         } catch (e: Exception) {
@@ -353,6 +358,7 @@ class MediaServer(
             onScreenShareStart()
             val answer = onScreenShareOffer(offer)
             if (answer.isNullOrBlank()) {
+                Log.e(TAG, "Screen share answer was null/blank")
                 stopScreenShare()
                 return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Unable to answer")
             }
@@ -365,6 +371,17 @@ class MediaServer(
             stopScreenShare()
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Screen share failed")
         }
+    }
+
+    private fun handleRtcStatus(): Response {
+        val status = onScreenShareStatus()
+        val json = JSONObject()
+            .put("active", screenShareActive)
+            .put("status", status)
+            .toString()
+        val response = newFixedLengthResponse(Response.Status.OK, "application/json; charset=utf-8", json)
+        response.addHeader("Cache-Control", "no-store")
+        return response
     }
 
     private fun handleRtcStop(): Response {
@@ -657,7 +674,10 @@ class MediaServer(
                     await waitIce(pc);
                     const res = await fetch('rtc/offer', { method:'POST', body: new URLSearchParams({ offer: pc.localDescription.sdp }) });
                     const data = await res.json().catch(() => ({}));
-                    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+                    if (!res.ok) {
+                      const st = await fetch('rtc/status').then(r => r.json()).catch(() => ({}));
+                      throw new Error(st.status || data.error || ('HTTP ' + res.status));
+                    }
                     await pc.setRemoteDescription({ type: 'answer', sdp: data.answer });
                     shareActive = true;
                     setStatus('Sharing screen...');

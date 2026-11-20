@@ -8,6 +8,7 @@ import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaStream
+import org.webrtc.MediaStreamTrack
 import org.webrtc.MediaConstraints
 import org.webrtc.SdpObserver
 import org.webrtc.VideoTrack
@@ -22,6 +23,25 @@ import java.util.concurrent.TimeUnit
 import org.webrtc.SurfaceViewRenderer
 
 class ScreenShareManager(context: Context) {
+    companion object {
+        @Volatile private var peerConnectionInitialized = false
+
+        @Synchronized
+        private fun ensurePeerConnectionInitialized(context: Context) {
+            if (peerConnectionInitialized) return
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+                    .setEnableInternalTracer(false)
+                    .createInitializationOptions(),
+            )
+            peerConnectionInitialized = true
+        }
+    }
+
+    init {
+        ensurePeerConnectionInitialized(context)
+    }
+
     private val eglBase = EglBase.create()
     private val factory = PeerConnectionFactory.builder()
         .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
@@ -86,12 +106,28 @@ class ScreenShareManager(context: Context) {
         }
         peerConnection = pc
 
+        // Receive-only transceivers matching the browser's video/audio m-lines.
+        pc.addTransceiver(
+            MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+        )
+        pc.addTransceiver(
+            MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+            RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY),
+        )
+
         val remoteLatch = CountDownLatch(1)
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {}
             override fun onSetSuccess() { remoteLatch.countDown() }
-            override fun onCreateFailure(message: String?) { remoteLatch.countDown() }
-            override fun onSetFailure(message: String?) { remoteLatch.countDown() }
+            override fun onCreateFailure(message: String?) {
+                lastError = "Remote description failed: ${message ?: "unknown"}"
+                remoteLatch.countDown()
+            }
+            override fun onSetFailure(message: String?) {
+                lastError = "Remote description failed: ${message ?: "unknown"}"
+                remoteLatch.countDown()
+            }
         }, SessionDescription(SessionDescription.Type.OFFER, offerSdp))
         remoteLatch.await(5, TimeUnit.SECONDS)
 
@@ -103,18 +139,32 @@ class ScreenShareManager(context: Context) {
                 answerLatch.countDown()
             }
             override fun onSetSuccess() {}
-            override fun onCreateFailure(message: String?) { answerLatch.countDown() }
-            override fun onSetFailure(message: String?) {}
+            override fun onCreateFailure(message: String?) {
+                lastError = "Create answer failed: ${message ?: "unknown"}"
+                answerLatch.countDown()
+            }
+            override fun onSetFailure(message: String?) {
+                lastError = "Answer description failed: ${message ?: "unknown"}"
+            }
         }, MediaConstraints())
         answerLatch.await(5, TimeUnit.SECONDS)
-        val localAnswer = answer ?: return null
+        val localAnswer = answer ?: run {
+            lastError = lastError ?: "No answer SDP produced"
+            return null
+        }
 
         val localLatch = CountDownLatch(1)
         pc.setLocalDescription(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {}
             override fun onSetSuccess() { localLatch.countDown() }
-            override fun onCreateFailure(message: String?) { localLatch.countDown() }
-            override fun onSetFailure(message: String?) { localLatch.countDown() }
+            override fun onCreateFailure(message: String?) {
+                lastError = "Local description failed: ${message ?: "unknown"}"
+                localLatch.countDown()
+            }
+            override fun onSetFailure(message: String?) {
+                lastError = "Local description failed: ${message ?: "unknown"}"
+                localLatch.countDown()
+            }
         }, localAnswer)
         localLatch.await(5, TimeUnit.SECONDS)
         waitForIce(pc)

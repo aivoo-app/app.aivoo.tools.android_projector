@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -61,7 +62,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        screenShareManager = runCatching { ScreenShareManager(this) }.getOrNull()
+        screenShareManager = runCatching { ScreenShareManager(this) }
+            .onFailure { Log.e("MainActivity", "ScreenShareManager init failed", it) }
+            .getOrNull()
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
@@ -276,6 +279,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                     status = getString(R.string.status_waiting)
                                 }
+                            }, {
+                                if (screenShareManager == null) "unavailable"
+                                else (screenShareManager?.lastError ?: "ok")
                             })
                             server = s
                             mediaManager.onStateChanged = { playing, pos ->
