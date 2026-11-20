@@ -62,6 +62,7 @@ class ScreenShareManager(context: Context) {
     fun createAnswer(offerSdp: String): String? {
         stop()
         lastError = null
+        try {
         val iceServers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
         )
@@ -169,6 +170,11 @@ class ScreenShareManager(context: Context) {
         localLatch.await(5, TimeUnit.SECONDS)
         waitForIce(pc)
         return pc.localDescription?.description
+        } catch (e: Exception) {
+            lastError = e.message ?: e.javaClass.simpleName
+            stop()
+            return null
+        }
     }
 
     private fun waitForIce(pc: PeerConnection) {
