@@ -25,11 +25,11 @@ An Android TV app that runs an embedded HTTPS server on the TV. A remote browser
 
 ## Features
 - Embedded NanoHTTPD **HTTPS** server on port `7071`, with automatic fallback to a free port if `7071` is busy.
-- Per-launch pairing token and a self-signed HTTPS certificate (browser shows a one-time certificate warning).
+- Per-launch 6-digit pairing PIN and a self-signed HTTPS certificate (browser shows a one-time certificate warning).
 - One global remote session at a time: a second device sees a busy page and cannot access the upload UI.
 - Browser screen sharing (screen/window/tab) via WebRTC, with audio when supported.
-- Per-launch pairing token embedded in the QR code and URL; requests without it receive `401`.
-- Home screen shows the actual `https://<TV_IP>:<port>/<token>/` URL, QR code, and session status.
+- Per-launch 6-digit pairing PIN; the URL stays clean and the PIN is shown on the TV.
+- Home screen shows the actual `https://<TV_IP>:<port>/` URL, QR code, 6-digit pairing PIN, and session status.
 - Multipart file upload (`POST /upload`) and URL submission (`POST /url`).
 - PDF viewer (zoom/pan, double-tap, DPAD-center toggle), ExoPlayer video viewer, image slideshow, and WebView renderer.
 - D-pad/remote navigation, activity-level Back handling, and focus requests.
@@ -40,14 +40,14 @@ An Android TV app that runs an embedded HTTPS server on the TV. A remote browser
 - No persistence: `cacheDir` is cleared on app start and activity destroy.
 
 ## Security model
-- **HTTPS + pairing token:** every endpoint requires HTTPS and the token as the first path segment: `/<token>/...`. The token is 128-bit random and generated per server start. The QR code contains the full URL. A self-signed certificate is used, so browsers show a one-time certificate warning.
+- **HTTPS + pairing PIN:** every endpoint requires HTTPS. The first browser pairs with the 6-digit PIN shown on the TV, then receives an HttpOnly session cookie. The URL stays clean. A self-signed certificate is used, so browsers show a one-time certificate warning.
 - **No wildcard CORS:** state-changing endpoints are same-origin only.
 - **Global session lock:** the first browser to claim the session owns the TV; a second browser gets a busy page. Heartbeats expire after 15 seconds, and Back/Home/release frees the session.
 - **No APK auto-install:** unknown files (including APKs/ZIPs) are stored as `.bin` downloads only. The app never launches a package installer from an upload.
 - **Path confinement:** `/media/` accepts only generated, allow-listed names; canonical-path checks reject `..`, separators, and NUL.
 - **Upload limits:** `Content-Length` is checked before parsing; 512 MB cap; free-space check; temp/partial files are removed on failure.
 - **WebView:** non-`http(s)` URLs are blocked; file access is disabled.
-- The server still binds all interfaces. The token is the primary access control; do not expose the TV to an untrusted network.
+- The server still binds all interfaces. The pairing PIN and global session lock are the access control; do not expose the TV to an untrusted network.
 
 ## Architecture
 ```
@@ -56,8 +56,8 @@ An Android TV app that runs an embedded HTTPS server on the TV. A remote browser
   -> MainActivity starts NanoHTTPD over HTTPS on 7071 (or a free fallback port)
   -> Compose shows StartScreen
   -> User starts the server
-  -> HomeScreen shows https://<TV_IP>:<port>/<token>/
-  -> Browser POSTs file/URL under the token prefix
+  -> HomeScreen shows https://<TV_IP>:<port>/ and a 6-digit pairing PIN
+  -> Browser pairs with the PIN, then POSTs file/URL with the session cookie
   -> MediaServer saves file to cacheDir, detects type, calls onUpload
   -> MainActivity switches to the renderer screen
   -> User views content; D-pad/remote controls
@@ -132,8 +132,8 @@ Use the committed `./gradlew` wrapper, not a system Gradle.
 
 ## Usage (end-to-end)
 1. Launch the app on the TV and press **Start Server**.
-2. The Home screen shows `https://<TV_IP>:<port>/<pairing-token>/` and a QR code.
-3. From a phone/laptop on the same LAN, scan the QR code or open the URL. The token is required.
+2. The Home screen shows `https://<TV_IP>:<port>/`, a QR code, and a 6-digit pairing PIN.
+3. From a phone/laptop on the same LAN, scan the QR code or open the URL, then enter the 6-digit pairing PIN.
 4. Upload a PDF/video/image, submit a URL, or open the Files tab.
 5. The TV switches to the appropriate viewer. Use the remote:
    - PDF/images: Left/Right or Page Up/Down.
@@ -143,17 +143,18 @@ Use the committed `./gradlew` wrapper, not a system Gradle.
 
 CLI test:
 ```bash
-curl -F 'file=@test.pdf' 'https://<TV_IP>:<port>/<pairing-token>/upload'
+curl -c cookies.txt -F 'pin=123456' -F 'clientId=cli' https://<TV_IP>:<port>/session/claim
+curl -b cookies.txt -F 'file=@test.pdf' https://<TV_IP>:<port>/upload
 ```
 
 ## HTTPS API
-All routes are under `/<token>/`.
+All routes are under `/`; the first request must pair with the PIN.
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | Minimal connecting page; claims the global session |
 | GET | `/app` | Full upload/share UI (requires active session cookie) |
-| POST | `/session/claim` | Claim the global session; sets `tv_session` cookie |
+| POST | `/session/claim` | Pair with `pin` + `clientId`; sets `tv_session` cookie |
 | POST | `/session/heartbeat` | Keep the session alive |
 | DELETE | `/session` | Release the session |
 | POST | `/upload` | Multipart file upload (`file` field) |
@@ -177,7 +178,7 @@ All routes are under `/<token>/`.
 - HTTPS uses a generated self-signed certificate stored in app-private storage.
 - Global session lock: one browser session at a time; 15-second heartbeat timeout.
 - Screen share: WebRTC; video + best-effort audio; one active share at a time.
-- Pairing token generated per server start.
+- 6-digit pairing PIN generated per server start; 5 failed attempts trigger a 30-second cooldown.
 - Upload cap: 512 MB; free-space headroom: 64 MB.
 - Cache wipe in `App.onCreate` and `MainActivity.onDestroy`.
 
@@ -217,7 +218,7 @@ Manual QA still required on a real TV/emulator:
 - Kotlin daemon crashes on JDK 25: `kotlin.daemon.enabled=false` is set; run `./gradlew --stop` and retry.
 - `Unresolved reference ContentType`: NanoHTTPD defines its own; ours is `app.aivoo.tools.androidprojector.model.ContentType` (fully qualified in `MediaServer`).
 - No IP / `0.0.0.0`: check network interface and permissions; the app listens for connectivity changes.
-- Upload fails: ensure the client is on the same LAN and uses the full token URL; check logcat `MediaServer`.
+- Upload fails: ensure the client is on the same LAN and has paired with the current PIN; check logcat `MediaServer`.
 - Audio sync is silent: mobile browsers may block audible autoplay. Use the audio controls once, then press Listen again.
 - Video does not play: unsupported codec/container; the player shows an error overlay.
 
@@ -232,7 +233,7 @@ Manual QA still required on a real TV/emulator:
 - Remote/internet screen sharing needs STUN/TURN; same-LAN direct WebRTC is the default.
 - Audio sync is best-effort and depends on browser autoplay policy and network latency.
 - Cache is not wiped on process death/force-stop; only on the next launch and normal activity destroy.
-- No user accounts; the pairing token and global session lock are the access control.
+- No user accounts; the pairing PIN and global session lock are the access control.
 - PDF zoom is capped at 5x and resets when the page changes.
 
 ## Release & signing

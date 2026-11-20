@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun HomeScreen(url: String, status: String, qrBitmap: Bitmap?) {
+fun HomeScreen(url: String, pairingPin: String, status: String, qrBitmap: Bitmap?) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center,
@@ -24,6 +24,10 @@ fun HomeScreen(url: String, status: String, qrBitmap: Bitmap?) {
         Text(stringResource(R.string.start_title), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(16.dp))
         Text(stringResource(R.string.server_url, url), fontSize = 16.sp, color = MaterialTheme.colorScheme.onBackground)
+        if (pairingPin.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text("Pairing code: $pairingPin", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        }
         Spacer(Modifier.height(8.dp))
         Text(status, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))

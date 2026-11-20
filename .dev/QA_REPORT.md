@@ -796,3 +796,13 @@ Implemented after the QA plan.
 - Phone-browser unsupported behavior.
 - TURN configuration for remote networks.
 - Long-run screen-share soak.
+
+### Phase 1 continued — pairing PIN (same day)
+
+- Removed the token from the URL; the TV URL is now `https://<TV_IP>:7071/`.
+- Added a 6-digit pairing PIN generated per launch and displayed on the TV Home screen.
+- Added a pairing page at `/`; it asks for the PIN and calls `/session/claim` with `pin` + `clientId`.
+- Added 5-attempt / 30-second PIN cooldown.
+- Global session lock remains: first paired device holds the session; other devices see a busy page until it closes.
+- Updated README, CHANGELOG, and HomeScreen UI.
+- Rebuilt and uploaded `app-release-1.2.3-pin.apk`.

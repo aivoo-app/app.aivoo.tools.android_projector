@@ -77,6 +77,7 @@ class MainActivity : ComponentActivity() {
                 var serverStarted by remember { mutableStateOf(false) }
                 var starting by remember { mutableStateOf(false) }
                 var serverUrl by remember { mutableStateOf<String?>(null) }
+                var pairingPin by remember { mutableStateOf("") }
                 var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 var updateInfo by remember { mutableStateOf<UpdateManager.ReleaseInfo?>(null) }
                 var pdfPage by rememberSaveable { mutableStateOf(0) }
@@ -123,7 +124,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(ip, serverStarted) {
                     val s = server ?: return@LaunchedEffect
                     if (serverStarted) {
-                        val url = "https://$ip:$port/${s.token}/"
+                        val url = "https://$ip:$port/"
                         serverUrl = url
                         qrBitmap = QrCodeUtils.generate(url)
                     }
@@ -284,8 +285,9 @@ class MainActivity : ComponentActivity() {
                                 server?.videoEventId = (server?.videoEventId ?: 0L) + 1L
                             }
                             s.start()
-                            val url = "https://$ip:$selectedPort/${s.token}/"
+                            val url = "https://$ip:$selectedPort/"
                             serverUrl = url
+                            pairingPin = s.pairingPin
                             qrBitmap = QrCodeUtils.generate(url)
                             status = getString(R.string.status_server_running)
                             serverStarted = true
@@ -293,6 +295,7 @@ class MainActivity : ComponentActivity() {
                             runCatching { server?.stop() }
                             server = null
                             serverUrl = null
+                            pairingPin = ""
                             status = getString(R.string.status_server_failed, e.message ?: "")
                         } finally {
                             starting = false
@@ -302,6 +305,7 @@ class MainActivity : ComponentActivity() {
                     when (val c = content) {
                         is Content.None -> HomeScreen(
                             url = serverUrl ?: "https://$ip:$port",
+                            pairingPin = pairingPin,
                             status = status,
                             qrBitmap = qrBitmap,
                         )

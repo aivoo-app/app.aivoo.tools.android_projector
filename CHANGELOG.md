@@ -7,10 +7,11 @@
 - Added a TV `ScreenShareScreen` backed by `SurfaceViewRenderer`.
 - Added HTTPS with a generated self-signed certificate (required for `getDisplayMedia`).
 - Added one-global-session locking with heartbeat/timeout and a busy page for second devices.
-- Added `/session/claim`, `/session/heartbeat`, `/session`, `/rtc/offer`, and `/rtc/stop` endpoints.
+- Added `/session/claim` (PIN + client ID), `/session/heartbeat`, `/session`, `/rtc/offer`, and `/rtc/stop` endpoints.
+- Added PIN rate limiting: 5 failed attempts trigger a 30-second cooldown.
 
 ### Security
-- Added a per-launch 128-bit pairing token required on every HTTP route.
+- Added a per-launch 6-digit pairing PIN; the URL stays clean and the PIN is shown on the TV.
 - Removed wildcard CORS headers.
 - Confined `/media/` to canonicalized, allow-listed upload names to prevent path traversal.
 - Added pre-parse `Content-Length` checks, a 512 MB upload cap, free-space checks, and temp/partial cleanup.

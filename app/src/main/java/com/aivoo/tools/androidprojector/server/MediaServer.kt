@@ -43,26 +43,20 @@ class MediaServer(
     private sealed interface ClaimResult {
         data class Ok(val sessionId: String) : ClaimResult
         data object Busy : ClaimResult
+        data object BadPin : ClaimResult
+        data object Blocked : ClaimResult
     }
 
     companion object {
         private const val TAG = "MediaServer"
         private const val MAX_UPLOAD_BYTES = 512L * 1024 * 1024 // 512 MB
         private const val MIN_FREE_BYTES = 64L * 1024 * 1024 // 64 MB headroom
-        private val HEX = "0123456789abcdef".toCharArray()
         private val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "mkv", "webm", "avi", "3gp", "ts")
         private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "avif")
 
-        private fun generateToken(): String {
-            val bytes = ByteArray(16)
-            SecureRandom().nextBytes(bytes)
-            return buildString(bytes.size * 2) {
-                for (b in bytes) {
-                    val v = b.toInt() and 0xFF
-                    append(HEX[v ushr 4])
-                    append(HEX[v and 0x0F])
-                }
-            }
+        private fun generatePin(): String {
+            val value = SecureRandom().nextInt(1_000_000)
+            return String.format(java.util.Locale.ROOT, "%06d", value)
         }
 
         private fun constantTimeEquals(a: String, b: String): Boolean {
@@ -73,7 +67,7 @@ class MediaServer(
         }
     }
 
-    val token: String = generateToken()
+    val pairingPin: String = generatePin()
 
     @Volatile var currentFile: File? = null
     @Volatile var currentPositionMs: Long = 0L
@@ -85,11 +79,13 @@ class MediaServer(
     @Volatile private var listenerCount: Int = 0
     @Volatile private var activeSession: RemoteSession? = null
     @Volatile private var screenShareActive: Boolean = false
+    @Volatile private var pinAttempts: Int = 0
+    @Volatile private var pinBlockedUntil: Long = 0L
     private val sessionLock = Any()
     private val uploadedFiles = java.util.Collections.synchronizedList(mutableListOf<String>())
     private val sessionTimeoutMs = 15_000L
     private val sessionCookieName = "tv_session"
-    private val sessionCookiePath = "/$token/"
+    private val sessionCookiePath = "/"
 
     private fun clearExpiredSession(): Boolean {
         val expired = synchronized(sessionLock) {
@@ -123,26 +119,39 @@ class MediaServer(
         if (hadSession) onSessionChanged(false)
     }
 
-    private fun claimSession(clientId: String): ClaimResult {
+    private fun claimSession(clientId: String, pin: String): ClaimResult {
         clearExpiredSession()
-        return synchronized(sessionLock) {
-        val current = activeSession
-        if (current != null && current.lastSeen + sessionTimeoutMs >= System.currentTimeMillis()) {
-            if (current.clientId == clientId) {
-                current.lastSeen = System.currentTimeMillis()
-                return@synchronized ClaimResult.Ok(current.id)
+        val now = System.currentTimeMillis()
+        if (now < pinBlockedUntil) return ClaimResult.Blocked
+        if (!constantTimeEquals(pin, pairingPin)) {
+            pinAttempts += 1
+            if (pinAttempts >= 5) {
+                pinAttempts = 0
+                pinBlockedUntil = now + 30_000L
+                return ClaimResult.Blocked
             }
-            return@synchronized ClaimResult.Busy
+            return ClaimResult.BadPin
         }
-        val session = RemoteSession(
-            id = generateToken(),
-            clientId = clientId,
-            createdAt = System.currentTimeMillis(),
-            lastSeen = System.currentTimeMillis(),
-        )
-        activeSession = session
-        onSessionChanged(true)
-        ClaimResult.Ok(session.id)
+        pinAttempts = 0
+        pinBlockedUntil = 0L
+        return synchronized(sessionLock) {
+            val current = activeSession
+            if (current != null && current.lastSeen + sessionTimeoutMs >= System.currentTimeMillis()) {
+                if (current.clientId == clientId) {
+                    current.lastSeen = System.currentTimeMillis()
+                    return@synchronized ClaimResult.Ok(current.id)
+                }
+                return@synchronized ClaimResult.Busy
+            }
+            val session = RemoteSession(
+                id = java.util.UUID.randomUUID().toString(),
+                clientId = clientId,
+                createdAt = System.currentTimeMillis(),
+                lastSeen = System.currentTimeMillis(),
+            )
+            activeSession = session
+            onSessionChanged(true)
+            ClaimResult.Ok(session.id)
         }
     }
 
@@ -199,23 +208,10 @@ class MediaServer(
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
         val method = session.method
-
-        // Pairing token is the first path segment: /<token>/...
-        val firstSlash = uri.indexOf('/', 1)
-        val presented = if (firstSlash == -1) uri.removePrefix("/") else uri.substring(1, firstSlash)
-        if (!constantTimeEquals(presented, token)) {
-            return newFixedLengthResponse(Response.Status.UNAUTHORIZED, "text/plain", "Unauthorized")
-        }
-        val route = if (firstSlash == -1) "/" else uri.substring(firstSlash).ifEmpty { "/" }
-
-        if (route == "/" && !uri.endsWith("/")) {
-            val redirect = newFixedLengthResponse(Response.Status.REDIRECT, "text/plain", "Redirecting")
-            redirect.addHeader("Location", "$uri/")
-            return redirect
-        }
+        val route = uri.ifEmpty { "/" }
 
         if (route == "/" && method == Method.GET) {
-            return serveLanding()
+            return serveRoot(session)
         }
         if (route == "/app" && method == Method.GET) {
             if (!requireSession(session)) {
@@ -288,16 +284,19 @@ class MediaServer(
         } catch (_: Exception) {
         }
         val clientId = session.parameters["clientId"]?.firstOrNull()?.trim()
-        if (clientId.isNullOrBlank()) {
-            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "clientId required")
+        val pin = session.parameters["pin"]?.firstOrNull()?.trim()
+        if (clientId.isNullOrBlank() || pin.isNullOrBlank()) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "clientId and pin required")
         }
-        return when (val result = claimSession(clientId)) {
+        return when (val result = claimSession(clientId, pin)) {
             is ClaimResult.Ok -> {
                 val response = newFixedLengthResponse(Response.Status.OK, "text/plain", "OK")
                 response.addHeader("Set-Cookie", cookieHeader(result.sessionId))
                 response
             }
             ClaimResult.Busy -> newFixedLengthResponse(Response.Status.CONFLICT, "text/plain", "session_in_progress")
+            ClaimResult.BadPin -> newFixedLengthResponse(Response.Status.UNAUTHORIZED, "text/plain", "invalid_pin")
+            ClaimResult.Blocked -> newFixedLengthResponse(Response.Status.TOO_MANY_REQUESTS, "text/plain", "too_many_attempts")
         }
     }
 
@@ -373,7 +372,19 @@ class MediaServer(
         return newFixedLengthResponse(Response.Status.OK, "text/plain", "stopped")
     }
 
-    private fun serveLanding(): Response {
+    private fun serveRoot(session: IHTTPSession): Response {
+        if (requireSession(session)) {
+            val redirect = newFixedLengthResponse(Response.Status.REDIRECT, "text/plain", "Redirecting")
+            redirect.addHeader("Location", "app")
+            return redirect
+        }
+        if (hasActiveSession()) {
+            return serveBusy()
+        }
+        return serveLanding()
+    }
+
+    private fun serveBusy(): Response {
         val html = """
             <!DOCTYPE html>
             <html lang="en">
@@ -392,22 +403,61 @@ class MediaServer(
             <body>
               <div class="card">
                 <h1>Android TV Projector</h1>
-                <div id="msg" class="hint">Connecting...</div>
-                <button onclick="claim()">Retry</button>
+                <p class="hint">TV is in use by another device.</p>
+                <p class="hint">Ask the other device to leave the session, then retry.</p>
+                <button onclick="location.href='.'">Retry</button>
+              </div>
+            </body>
+            </html>
+        """.trimIndent()
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html).apply {
+            addHeader("Cache-Control", "no-store")
+            addHeader("X-Content-Type-Options", "nosniff")
+            addHeader("Referrer-Policy", "no-referrer")
+        }
+    }
+
+    private fun serveLanding(): Response {
+        val html = """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <meta name="referrer" content="no-referrer" />
+              <title>Android TV Projector</title>
+              <style>
+                body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0b1020; color:#e2e8f0; font-family:system-ui,-apple-system,sans-serif; padding:24px; }
+                .card { background:rgba(30,41,59,.85); border:1px solid rgba(148,163,184,.2); border-radius:18px; padding:28px; max-width:420px; width:100%; text-align:center; }
+                input { width:100%; margin-top:14px; padding:12px; border-radius:10px; border:1px solid rgba(148,163,184,.25); background:#0f172a; color:#e2e8f0; font-size:22px; text-align:center; letter-spacing:6px; }
+                button { margin-top:14px; width:100%; padding:12px; border:none; border-radius:10px; background:#6366f1; color:white; font-size:15px; cursor:pointer; }
+                .hint { color:#94a3b8; font-size:13px; margin-top:10px; }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h1>Android TV Projector</h1>
+                <p class="hint">Enter the 6-digit pairing code shown on the TV.</p>
+                <input id="pin" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" />
+                <button onclick="claim()">Pair</button>
+                <div id="msg" class="hint"></div>
               </div>
               <script>
                 const clientId = sessionStorage.getItem('tv_client') || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
                 sessionStorage.setItem('tv_client', clientId);
                 function setMsg(t){ document.getElementById('msg').textContent = t; }
                 async function claim(){
+                  const pin = document.getElementById('pin').value.trim();
+                  if (!/^[0-9]{6}$/.test(pin)) { setMsg('Enter the 6-digit pairing code.'); return; }
                   try {
-                    const res = await fetch('session/claim', {method:'POST', body:new URLSearchParams({clientId})});
+                    const res = await fetch('session/claim', {method:'POST', body:new URLSearchParams({clientId, pin})});
                     if (res.ok) { location.replace('app'); return; }
                     if (res.status === 409) { setMsg('TV is in use by another device.'); return; }
+                    if (res.status === 401) { setMsg('Invalid pairing code.'); return; }
+                    if (res.status === 429) { setMsg('Too many attempts. Wait 30 seconds.'); return; }
                     throw new Error('HTTP ' + res.status);
                   } catch(e) { setMsg('Unable to connect: ' + e); }
                 }
-                claim();
               </script>
             </body>
             </html>
